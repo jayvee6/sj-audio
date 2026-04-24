@@ -30,3 +30,4 @@ export {
   isLikelyChromium,
 } from './sources/createDisplayMediaSource.js';
 export { createFileSource } from './sources/createFileSource.js';
+export { detectCapabilities } from './engine/detectCapabilities.js';
