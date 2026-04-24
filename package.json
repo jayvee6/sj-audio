@@ -27,5 +27,8 @@
     "music-visualization",
     "getusermedia",
     "getdisplaymedia"
-  ]
+  ],
+  "devDependencies": {
+    "typescript": "~5.6.0"
+  }
 }
