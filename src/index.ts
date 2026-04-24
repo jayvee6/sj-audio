@@ -25,3 +25,7 @@ export { AudioSourceUnavailableError } from './types.js';
 
 export { createMediaElementSource } from './sources/createMediaElementSource.js';
 export { createMicrophoneSource } from './sources/createMicrophoneSource.js';
+export {
+  createDisplayMediaSource,
+  isLikelyChromium,
+} from './sources/createDisplayMediaSource.js';

@@ -1,0 +1,70 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SJAudio — Display/Tab Audio demo</title>
+    <style>
+      body { font: 14px/1.4 system-ui; margin: 24px; background: #0b0b10; color: #eaeaf0; }
+      button { padding: 10px 20px; font-size: 14px; background: #3b82f6; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .bars { display: flex; gap: 2px; height: 160px; align-items: flex-end; margin-top: 16px; }
+      .bar { flex: 1; background: linear-gradient(to top, #3b82f6, #ef4444); transition: height 16ms linear; }
+      .warn { color: #fbbf24; background: #1a1a24; padding: 8px 12px; border-radius: 4px; margin-top: 16px; }
+      .err { color: #ef4444; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>SJAudio — Display/Tab audio source</h1>
+    <p>Captures audio from another browser tab (Chrome/Edge desktop only). In the picker, choose a tab playing audio and <strong>tick "Share tab audio"</strong>.</p>
+    <div class="warn" id="warn"></div>
+    <button id="start">Share a tab with audio</button>
+    <button id="stop" disabled>Stop</button>
+    <div class="bars" id="bars"></div>
+    <div class="err" id="err"></div>
+
+    <script type="module">
+      import { createDisplayMediaSource, isLikelyChromium } from '../dist/sj-audio.esm.js';
+
+      const warn = document.getElementById('warn');
+      if (!isLikelyChromium()) {
+        warn.textContent = 'This browser is not Chromium — tab audio capture will fail. Try Chrome or Edge for this demo.';
+      } else {
+        warn.style.display = 'none';
+      }
+
+      const barsEl = document.getElementById('bars');
+      const bars = Array.from({ length: 32 }, () => {
+        const b = document.createElement('div');
+        b.className = 'bar';
+        b.style.height = '2px';
+        barsEl.appendChild(b);
+        return b;
+      });
+
+      const source = createDisplayMediaSource();
+      source.onFrame((f) => {
+        for (let i = 0; i < 32; i++) {
+          bars[i].style.height = `${Math.max(2, f.magnitudesSmooth[i] * 160)}px`;
+        }
+      });
+
+      document.getElementById('start').addEventListener('click', async () => {
+        try {
+          await source.start();
+          document.getElementById('start').disabled = true;
+          document.getElementById('stop').disabled = false;
+          document.getElementById('err').textContent = '';
+        } catch (err) {
+          document.getElementById('err').textContent =
+            `Tab audio unavailable (${err.reason ?? 'unknown'}): ${err.message}`;
+        }
+      });
+
+      document.getElementById('stop').addEventListener('click', () => {
+        source.stop();
+        document.getElementById('start').disabled = false;
+        document.getElementById('stop').disabled = true;
+      });
+    </script>
+  </body>
+</html>
