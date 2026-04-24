@@ -1,0 +1,87 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SJAudio — UMD drop-in smoke test</title>
+    <style>
+      body { font: 14px/1.5 system-ui; margin: 24px; background: #0b0b10; color: #eaeaf0; }
+      h1 { margin-bottom: 4px; }
+      .sub { color: #a1a1aa; margin-top: 0; }
+      audio { display: block; margin: 16px 0; }
+      pre { background: #1a1a24; padding: 12px; border-radius: 4px; font-size: 12px; overflow-x: auto; }
+      .ok { color: #10b981; }
+      .bad { color: #ef4444; }
+    </style>
+  </head>
+  <body>
+    <h1>SJAudio — UMD smoke test</h1>
+    <p class="sub">
+      Validates the <code>&lt;script&gt;</code>-tag drop-in that musicplayer-viz will use:
+      loads the UMD, asserts <code>window.SJAudio</code>, wires
+      <code>window.AudioEngine = SJAudio.createAudioEngine(...)</code>, and
+      prints the first AudioFrame's shape to prove parity with the existing
+      <code>audio-engine.js</code> contract.
+    </p>
+
+    <!-- This line is literally what musicplayer-viz will add (with a CDN URL). -->
+    <script src="../dist/sj-audio.umd.js"></script>
+
+    <audio id="a" controls crossorigin="anonymous"
+      src="https://cdn.pixabay.com/audio/2022/03/15/audio_c9f6b3b7e5.mp3"></audio>
+
+    <pre id="report">awaiting first frame...</pre>
+
+    <script>
+      const report = document.getElementById('report');
+      const log = (line, ok = null) => {
+        const cls = ok === true ? 'ok' : ok === false ? 'bad' : '';
+        report.innerHTML += `<div class="${cls}">${line}</div>`;
+      };
+      report.innerHTML = '';
+
+      // ── Assert the UMD global ────────────────────────────────────────────
+      if (typeof window.SJAudio !== 'object') {
+        log('FAIL: window.SJAudio not defined', false);
+        throw new Error('SJAudio global missing');
+      }
+      log(`✓ window.SJAudio present — version ${window.SJAudio.version}`, true);
+      log(`✓ detectCapabilities(): ${JSON.stringify(SJAudio.detectCapabilities())}`, true);
+
+      // ── Wire the drop-in exactly as musicplayer-viz will ─────────────────
+      const audio = document.getElementById('a');
+      window.AudioEngine = SJAudio.createAudioEngine({
+        mediaElement: audio,
+        fallbackChain: ['mediaElement'], // force mediaElement — no user prompt
+      });
+      log('✓ window.AudioEngine assigned from SJAudio.createAudioEngine', true);
+
+      // ── Listen, start on first play ──────────────────────────────────────
+      let firstFramePrinted = false;
+      window.AudioEngine.onFrame((frame) => {
+        if (firstFramePrinted) return;
+        firstFramePrinted = true;
+        const requiredFields = [
+          'time', 'bass', 'mid', 'treble', 'beatPulse', 'bpm', 'isBeatNow',
+          'bassHistory', 'magnitudes', 'magnitudesSmooth', 'waveform',
+          'valence', 'energy', 'danceability', 'tempoBPM', 'width', 'height',
+        ];
+        const missing = requiredFields.filter((k) => !(k in frame));
+        if (missing.length === 0) {
+          log(`✓ AudioFrame contract complete (${requiredFields.length} fields)`, true);
+        } else {
+          log(`FAIL: missing fields ${missing.join(', ')}`, false);
+        }
+        log(`  magnitudes.length = ${frame.magnitudes.length} (expected 32)`, frame.magnitudes.length === 32);
+        log(`  waveform.length   = ${frame.waveform.length} (expected 256)`, frame.waveform.length === 256);
+        log(`  bassHistory.length= ${frame.bassHistory.length} (expected 16)`, frame.bassHistory.length === 16);
+        log('');
+        log('✓ Parity: window.AudioEngine.currentFrame() returns full AudioFrame.', true);
+      });
+
+      audio.addEventListener('play', () => {
+        log('→ audio playing — starting engine');
+        window.AudioEngine.start().catch((err) => log(`FAIL: start() rejected: ${err}`, false));
+      }, { once: true });
+    </script>
+  </body>
+</html>
