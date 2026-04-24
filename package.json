@@ -1,0 +1,31 @@
+{
+  "name": "sj-audio",
+  "version": "0.0.1",
+  "description": "Cross-browser web audio capture + analysis library for music visualization. Exposes window.SJAudio.",
+  "license": "MIT",
+  "author": "Joe Villarreal <joeyvillarreal@me.com>",
+  "main": "dist/sj-audio.cjs.js",
+  "module": "dist/sj-audio.esm.js",
+  "unpkg": "dist/sj-audio.umd.js",
+  "jsdelivr": "dist/sj-audio.umd.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "src",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build": "echo \"build not wired yet — see chunk 2\" && exit 1",
+    "test": "echo \"tests not wired yet — see chunk 3\" && exit 1"
+  },
+  "keywords": [
+    "web-audio",
+    "audio-analysis",
+    "fft",
+    "beat-detection",
+    "music-visualization",
+    "getusermedia",
+    "getdisplaymedia"
+  ]
+}
