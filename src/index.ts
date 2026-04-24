@@ -29,3 +29,4 @@ export {
   createDisplayMediaSource,
   isLikelyChromium,
 } from './sources/createDisplayMediaSource.js';
+export { createFileSource } from './sources/createFileSource.js';

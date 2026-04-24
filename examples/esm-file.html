@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SJAudio — File Upload demo</title>
+    <style>
+      body { font: 14px/1.4 system-ui; margin: 24px; background: #0b0b10; color: #eaeaf0; }
+      .drop { border: 2px dashed #a855f7; padding: 32px; text-align: center; border-radius: 8px; cursor: pointer; transition: background 150ms; }
+      .drop.over { background: #1a1a24; border-color: #ec4899; }
+      .drop p { margin: 0; }
+      .bars { display: flex; gap: 2px; height: 160px; align-items: flex-end; margin-top: 16px; }
+      .bar { flex: 1; background: linear-gradient(to top, #ec4899, #f59e0b); transition: height 16ms linear; }
+      .err { color: #ef4444; margin-top: 16px; }
+      input[type="file"] { display: none; }
+    </style>
+  </head>
+  <body>
+    <h1>SJAudio — File source</h1>
+    <p>Drop an audio file (MP3, WAV, AAC, FLAC, or OGG on Safari 18.4+) onto the box. Plays once, emits frames, stops. No transport controls — that's the "analyze-only" design.</p>
+    <label class="drop" id="drop">
+      <p><strong>Drop a file here</strong> — or click to pick</p>
+      <input type="file" id="picker" accept="audio/*" />
+    </label>
+    <div class="bars" id="bars"></div>
+    <div class="err" id="err"></div>
+
+    <script type="module">
+      import { createFileSource } from '../dist/sj-audio.esm.js';
+
+      const barsEl = document.getElementById('bars');
+      const bars = Array.from({ length: 32 }, () => {
+        const b = document.createElement('div');
+        b.className = 'bar';
+        b.style.height = '2px';
+        barsEl.appendChild(b);
+        return b;
+      });
+
+      const drop = document.getElementById('drop');
+      const picker = document.getElementById('picker');
+      const err = document.getElementById('err');
+
+      let active = null;
+
+      async function play(file) {
+        if (active) active.stop();
+        err.textContent = '';
+        const source = createFileSource(file);
+        source.onFrame((f) => {
+          for (let i = 0; i < 32; i++) {
+            bars[i].style.height = `${Math.max(2, f.magnitudesSmooth[i] * 160)}px`;
+          }
+        });
+        try {
+          await source.start();
+          active = source;
+        } catch (e) {
+          err.textContent = `Playback failed (${e.reason ?? 'unknown'}): ${e.message}`;
+        }
+      }
+
+      drop.addEventListener('dragover', (e) => {
+        e.preventDefault();
+        drop.classList.add('over');
+      });
+      drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+      drop.addEventListener('drop', (e) => {
+        e.preventDefault();
+        drop.classList.remove('over');
+        const f = e.dataTransfer?.files?.[0];
+        if (f) play(f);
+      });
+      picker.addEventListener('change', () => {
+        const f = picker.files?.[0];
+        if (f) play(f);
+      });
+    </script>
+  </body>
+</html>
