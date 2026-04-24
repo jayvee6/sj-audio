@@ -15,8 +15,10 @@
     "README.md",
     "LICENSE"
   ],
+  "type": "module",
   "scripts": {
-    "build": "echo \"build not wired yet — see chunk 2\" && exit 1",
+    "build": "rollup -c",
+    "typecheck": "tsc --noEmit",
     "test": "echo \"tests not wired yet — see chunk 3\" && exit 1"
   },
   "keywords": [
@@ -29,6 +31,10 @@
     "getdisplaymedia"
   ],
   "devDependencies": {
+    "@rollup/plugin-typescript": "^12.3.0",
+    "rollup": "^4.60.2",
+    "rollup-plugin-dts": "^6.4.1",
+    "tslib": "^2.8.1",
     "typescript": "~5.6.0"
   }
 }
