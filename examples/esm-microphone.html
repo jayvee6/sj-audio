@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SJAudio — Microphone demo</title>
+    <style>
+      body { font: 14px/1.4 system-ui; margin: 24px; background: #0b0b10; color: #eaeaf0; }
+      button { padding: 10px 20px; font-size: 14px; background: #a855f7; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .bars { display: flex; gap: 2px; height: 160px; align-items: flex-end; margin-top: 16px; }
+      .bar { flex: 1; background: linear-gradient(to top, #10b981, #f59e0b); transition: height 16ms linear; }
+      .err { color: #ef4444; margin-top: 16px; }
+    </style>
+  </head>
+  <body>
+    <h1>SJAudio — Microphone source</h1>
+    <p>Captures the default mic; ideal for clapping, whistling, or routing a virtual audio device (BlackHole, Loopback).</p>
+    <button id="start">Start microphone</button>
+    <button id="stop" disabled>Stop</button>
+    <div class="bars" id="bars"></div>
+    <div class="err" id="err"></div>
+
+    <script type="module">
+      import { createMicrophoneSource } from '../dist/sj-audio.esm.js';
+
+      const barsEl = document.getElementById('bars');
+      const bars = Array.from({ length: 32 }, () => {
+        const b = document.createElement('div');
+        b.className = 'bar';
+        b.style.height = '2px';
+        barsEl.appendChild(b);
+        return b;
+      });
+
+      const source = createMicrophoneSource();
+      source.onFrame((f) => {
+        for (let i = 0; i < 32; i++) {
+          bars[i].style.height = `${Math.max(2, f.magnitudesSmooth[i] * 160)}px`;
+        }
+      });
+
+      document.getElementById('start').addEventListener('click', async () => {
+        try {
+          await source.start();
+          document.getElementById('start').disabled = true;
+          document.getElementById('stop').disabled = false;
+          document.getElementById('err').textContent = '';
+        } catch (err) {
+          document.getElementById('err').textContent =
+            `Microphone unavailable (${err.reason ?? 'unknown'}): ${err.message}`;
+        }
+      });
+
+      document.getElementById('stop').addEventListener('click', () => {
+        source.stop();
+        document.getElementById('start').disabled = false;
+        document.getElementById('stop').disabled = true;
+      });
+    </script>
+  </body>
+</html>
