@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SJAudio — Media Element demo</title>
+    <style>
+      body { font: 14px/1.4 system-ui; margin: 24px; background: #0b0b10; color: #eaeaf0; }
+      audio { display: block; margin: 16px 0; }
+      .bars { display: flex; gap: 2px; height: 160px; align-items: flex-end; margin-top: 16px; }
+      .bar { flex: 1; background: linear-gradient(to top, #3b82f6, #a855f7); transition: height 16ms linear; }
+      .stats { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-top: 16px; }
+      .stats div { background: #1a1a24; padding: 8px 12px; border-radius: 4px; }
+      .stats strong { color: #a855f7; }
+      .beat { box-shadow: 0 0 0 2px #ef4444 inset; }
+    </style>
+  </head>
+  <body>
+    <h1>SJAudio — Media Element source</h1>
+    <p>Plays <code>&lt;audio&gt;</code> through the library; reads per-frame <code>AudioFrame</code> and renders a 32-band bar graph.</p>
+
+    <audio id="a" controls crossorigin="anonymous"
+      src="https://cdn.pixabay.com/audio/2022/03/15/audio_c9f6b3b7e5.mp3"></audio>
+
+    <div class="bars" id="bars"></div>
+    <div class="stats" id="stats">
+      <div>bass <strong id="s-bass">0.00</strong></div>
+      <div>mid <strong id="s-mid">0.00</strong></div>
+      <div>treble <strong id="s-treble">0.00</strong></div>
+      <div>bpm <strong id="s-bpm">0</strong></div>
+    </div>
+
+    <script type="module">
+      import { createMediaElementSource } from '../dist/sj-audio.esm.js';
+
+      const audio = document.getElementById('a');
+      const barsEl = document.getElementById('bars');
+      const bars = Array.from({ length: 32 }, () => {
+        const b = document.createElement('div');
+        b.className = 'bar';
+        b.style.height = '2px';
+        barsEl.appendChild(b);
+        return b;
+      });
+      const $ = (id) => document.getElementById(id);
+
+      const source = createMediaElementSource(audio);
+
+      // Tiny log helper for console smoke-test.
+      source.onFrame((f) => {
+        for (let i = 0; i < 32; i++) {
+          bars[i].style.height = `${Math.max(2, f.magnitudesSmooth[i] * 160)}px`;
+        }
+        $('s-bass').textContent = f.bass.toFixed(2);
+        $('s-mid').textContent = f.mid.toFixed(2);
+        $('s-treble').textContent = f.treble.toFixed(2);
+        $('s-bpm').textContent = Math.round(f.bpm);
+        document.body.classList.toggle('beat', f.isBeatNow);
+      });
+
+      // Start on first play (user gesture unlocks AudioContext).
+      audio.addEventListener('play', () => source.start(), { once: true });
+    </script>
+  </body>
+</html>

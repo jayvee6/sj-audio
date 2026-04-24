@@ -22,3 +22,5 @@ export type {
 } from './types.js';
 
 export { AudioSourceUnavailableError } from './types.js';
+
+export { createMediaElementSource } from './sources/createMediaElementSource.js';
