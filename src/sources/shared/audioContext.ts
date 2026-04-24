@@ -46,6 +46,12 @@ export function unlockAudioContext(target: EventTarget = globalThis): void {
     unlockAttached = true;
     return;
   }
+  // Silently no-op in environments without a DOM (e.g. vitest node env) —
+  // callers should `resume()` manually there, or swap `target` for a real
+  // DOM node in browser.
+  if (typeof (target as EventTarget).addEventListener !== 'function') {
+    return;
+  }
   const events: Array<keyof DocumentEventMap> = [
     'touchstart',
     'touchend',
