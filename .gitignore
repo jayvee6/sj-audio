@@ -1,6 +1,8 @@
 node_modules/
-dist/
 .DS_Store
 *.log
 coverage/
 .vitest-cache/
+
+# dist/ is tracked so jsdelivr/unpkg can serve it at a git tag.
+# Rebuild with `npm run build` and commit before `git tag vX.Y.Z`.

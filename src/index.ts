@@ -6,7 +6,7 @@
  * ESM + CJS + UMD (global: `window.SJAudio`).
  */
 
-export const version = '0.0.1';
+export const version = '0.1.0';
 
 export type {
   AudioFrame,
