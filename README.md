@@ -18,7 +18,7 @@ Plus **`detectCapabilities()`** for synchronous, side-effect-free feature detect
 ### Via CDN (recommended for `<script>`-style integration)
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/jayvee6/sj-audio@v0.1.0/dist/sj-audio.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/jayvee6/sj-audio@v0.2.0/dist/sj-audio.umd.js"></script>
 <script>
   const engine = SJAudio.createAudioEngine({
     mediaElement: document.querySelector('audio'),
@@ -33,7 +33,7 @@ Plus **`detectCapabilities()`** for synchronous, side-effect-free feature detect
 ### Via ESM
 
 ```js
-import { createAudioEngine } from 'https://cdn.jsdelivr.net/gh/jayvee6/sj-audio@v0.1.0/dist/sj-audio.esm.js';
+import { createAudioEngine } from 'https://cdn.jsdelivr.net/gh/jayvee6/sj-audio@v0.2.0/dist/sj-audio.esm.js';
 ```
 
 ## Per-source recipes
@@ -100,6 +100,30 @@ fileInput.addEventListener('change', async () => {
 
 Need play / pause / seek? Use an `<audio>` element with `createMediaElementSource` instead.
 
+### Native bridge — system audio in *every* browser
+
+Captures whatever's playing on the machine via the notarized
+[SJAudioBridge](https://github.com/jayvee6/sj-audio-bridge) macOS menubar
+helper over a token-gated localhost WebSocket. Unlike `displayMedia`, this
+works in **Safari and Firefox too** (the page just reads a socket), at
+bit-perfect fidelity, and can see DRM playback (Spotify/Apple Music).
+
+```js
+import { createNativeBridgeSource } from 'sj-audio';
+
+// token: SJAudioBridge menubar ▸ "Copy Connection Token"
+const source = createNativeBridgeSource({ token });
+source.onFrame(drawViz);
+try {
+  await source.start();
+} catch (err) {
+  if (err.reason === 'bridge-unreachable') showInstallBanner();
+  if (err.reason === 'auth-failed') alert('Re-copy the token.');
+}
+```
+
+Or via the orchestrator: `createAudioEngine({ nativeBridge: { token }, fallbackChain: ['nativeBridge', 'microphone', 'file'] })`.
+
 ### Orchestrator with fallback chain
 
 ```js
@@ -148,8 +172,9 @@ Typed-array buffers are **stable references** — `frame.magnitudes` is the same
 
 ```ts
 class AudioSourceUnavailableError extends Error {
-  kind:   'mediaElement' | 'microphone' | 'displayMedia' | 'file';
-  reason: 'unsupported' | 'permission-denied' | 'no-audio-track' | 'decode-failed' | 'aborted';
+  kind:   'mediaElement' | 'microphone' | 'displayMedia' | 'file' | 'nativeBridge';
+  reason: 'unsupported' | 'permission-denied' | 'no-audio-track'
+        | 'decode-failed' | 'bridge-unreachable' | 'auth-failed' | 'aborted';
 }
 ```
 

@@ -52,7 +52,7 @@ export interface Capabilities {
     file: boolean;
 }
 /** Discriminator for `AudioSource.kind` and `AudioSourceUnavailableError.kind`. */
-export type AudioSourceKind = 'mediaElement' | 'microphone' | 'displayMedia' | 'file';
+export type AudioSourceKind = 'mediaElement' | 'microphone' | 'displayMedia' | 'file' | 'nativeBridge';
 /** Callback for frame subscription. Returned Unsubscribe detaches the listener. */
 export type FrameListener = (frame: AudioFrame) => void;
 export type Unsubscribe = () => void;
@@ -79,7 +79,7 @@ export interface AudioSource {
     setViewport(width: number, height: number): void;
 }
 /** Why an adapter cannot run in the current environment / under current conditions. */
-export type AudioSourceUnavailableReason = 'unsupported' | 'permission-denied' | 'no-audio-track' | 'decode-failed' | 'aborted';
+export type AudioSourceUnavailableReason = 'unsupported' | 'permission-denied' | 'no-audio-track' | 'decode-failed' | 'bridge-unreachable' | 'auth-failed' | 'aborted';
 export declare class AudioSourceUnavailableError extends Error {
     readonly kind: AudioSourceKind;
     readonly reason: AudioSourceUnavailableReason;
@@ -110,6 +110,11 @@ export interface AudioEngineOptions {
     mediaElement?: HTMLMediaElement;
     /** Required if `file` is in the chain. */
     file?: Blob | File;
+    /** Required if `nativeBridge` is in the chain (SJAudioBridge token + url). */
+    nativeBridge?: {
+        token: string;
+        url?: string;
+    };
     /** Analyzer options applied to whichever source the engine picks. */
     analyzer?: AnalyzerOptions;
 }

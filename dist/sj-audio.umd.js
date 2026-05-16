@@ -1107,6 +1107,333 @@
     }
 
     /**
+     * SJAudioBridge wire protocol v1 — pure decoder/encoder (no WebSocket dep, so
+     * it unit-tests in isolation). Mirrors sj-audio-bridge's Swift WSServer.
+     *
+     *   server → client  text    {"type":"hello","protocol":1}
+     *   client → server  text    {"type":"auth","token":"<hex>"}
+     *   server → client  text    {"type":"ready","sampleRate":48000,"channels":1,
+     *                             "blockSize":1024,"format":"f32le","protocol":1}
+     *   server → client  BINARY  blockSize little-endian Float32 mono samples
+     */
+    const BRIDGE_PROTOCOL_VERSION = 1;
+    class BridgeProtocolError extends Error {
+        constructor(message) {
+            super(message);
+            this.name = 'BridgeProtocolError';
+        }
+    }
+    /** Build the client→server auth frame (a JSON string). */
+    function buildAuthMessage(token) {
+        return JSON.stringify({ type: 'auth', token });
+    }
+    /**
+     * Decode one inbound WS message.
+     * - string  → parsed JSON control message (hello/ready/unknown)
+     * - ArrayBuffer/typed buffer → PCM (Float32, little-endian)
+     *
+     * Throws BridgeProtocolError on malformed control JSON or a PCM buffer whose
+     * byte length isn't a multiple of 4 (Float32).
+     */
+    function decodeBridgeMessage(data) {
+        if (typeof data === 'string')
+            return decodeControl(data);
+        const buf = isArrayBufferView(data)
+            ? data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength)
+            : data;
+        if (buf.byteLength % 4 !== 0) {
+            throw new BridgeProtocolError(`PCM frame byte length ${buf.byteLength} is not a multiple of 4 (Float32)`);
+        }
+        // Web Audio + every target platform is little-endian; the bridge sends
+        // native-endian Float32 (documented f32le). new Float32Array(buf) reads LE.
+        return { kind: 'pcm', samples: new Float32Array(buf) };
+    }
+    function decodeControl(text) {
+        let obj;
+        try {
+            obj = JSON.parse(text);
+        }
+        catch {
+            throw new BridgeProtocolError(`control message is not valid JSON: ${text.slice(0, 80)}`);
+        }
+        if (typeof obj !== 'object' || obj === null || !('type' in obj)) {
+            return { kind: 'unknown', raw: obj };
+        }
+        const o = obj;
+        switch (o.type) {
+            case 'hello':
+                return { kind: 'hello', protocol: numberOr(o.protocol, 0) };
+            case 'ready': {
+                const ready = {
+                    kind: 'ready',
+                    sampleRate: numberOr(o.sampleRate, 0),
+                    channels: numberOr(o.channels, 1),
+                    blockSize: numberOr(o.blockSize, 0),
+                    format: o.format === 'f32le' ? 'f32le' : 'f32le',
+                    protocol: numberOr(o.protocol, 0),
+                };
+                if (o.format !== 'f32le') {
+                    throw new BridgeProtocolError(`unsupported PCM format "${String(o.format)}" (expected f32le)`);
+                }
+                if (ready.protocol !== BRIDGE_PROTOCOL_VERSION) {
+                    throw new BridgeProtocolError(`protocol mismatch: bridge=${ready.protocol}, client=${BRIDGE_PROTOCOL_VERSION}`);
+                }
+                if (ready.sampleRate <= 0 || ready.blockSize <= 0) {
+                    throw new BridgeProtocolError(`invalid ready params sampleRate=${ready.sampleRate} blockSize=${ready.blockSize}`);
+                }
+                return ready;
+            }
+            default:
+                return { kind: 'unknown', raw: obj };
+        }
+    }
+    function numberOr(v, fallback) {
+        return typeof v === 'number' && Number.isFinite(v) ? v : fallback;
+    }
+    function isArrayBufferView(v) {
+        return ArrayBuffer.isView(v);
+    }
+
+    /**
+     * AudioWorklet PCM injector — pumps native-bridge Float32 blocks into the
+     * Web Audio graph so the EXISTING AnalyserNodeAnalyzer + FramePipeline run
+     * unchanged (zero analysis edits → automatic viz parity with every other
+     * sj-audio source).
+     *
+     * The worklet processor is shipped as an inline Blob URL (no separate file to
+     * host — works for both the ESM and UMD builds). Its queue mirrors
+     * PcmRingBuffer's policy: underrun → brief silence (never stall), backlog
+     * capped (drop oldest) so latency stays bounded.
+     *
+     * Browser-only glue — the queue *policy* is unit-tested via PcmRingBuffer;
+     * this wiring is exercised end-to-end by the W4 demo.
+     */
+    const PROCESSOR_NAME = 'sj-pcm-injector';
+    // Inline worklet processor. Runs in AudioWorkletGlobalScope (no imports).
+    const PROCESSOR_SRC = /* js */ `
+class SJPcmInjector extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this._q = [];        // queued Float32Array chunks
+    this._off = 0;        // read offset into _q[0]
+    this._buffered = 0;   // total queued samples
+    this._cap = 48000;    // ~1s @ 48k latency ceiling
+    this.port.onmessage = (e) => {
+      const chunk = e.data;
+      if (!(chunk instanceof Float32Array) || chunk.length === 0) return;
+      this._q.push(chunk);
+      this._buffered += chunk.length;
+      // Backlog cap: drop oldest whole chunks until under the ceiling.
+      while (this._buffered > this._cap && this._q.length > 1) {
+        const dropped = this._q.shift();
+        this._buffered -= (dropped.length - this._off);
+        this._off = 0;
+      }
+    };
+  }
+  process(_inputs, outputs) {
+    const out = outputs[0];
+    if (!out || out.length === 0) return true;
+    const frames = out[0].length;
+    const mono = new Float32Array(frames);
+    let i = 0;
+    while (i < frames && this._q.length > 0) {
+      const head = this._q[0];
+      const avail = head.length - this._off;
+      const take = Math.min(avail, frames - i);
+      mono.set(head.subarray(this._off, this._off + take), i);
+      this._off += take;
+      this._buffered -= take;
+      i += take;
+      if (this._off >= head.length) { this._q.shift(); this._off = 0; }
+    }
+    // i..frames stays zero (underrun → silence).
+    for (let c = 0; c < out.length; c++) out[c].set(mono);
+    return true;
+  }
+}
+registerProcessor(${JSON.stringify(PROCESSOR_NAME)}, SJPcmInjector);
+`;
+    let modulePromise = null;
+    /** Lazily registers the worklet module once per AudioContext-bearing realm. */
+    async function ensureModule(ctx) {
+        if (!modulePromise) {
+            const blob = new Blob([PROCESSOR_SRC], { type: 'application/javascript' });
+            const url = URL.createObjectURL(blob);
+            modulePromise = ctx.audioWorklet.addModule(url).finally(() => {
+                URL.revokeObjectURL(url);
+            });
+        }
+        return modulePromise;
+    }
+    /**
+     * Create a PCM injector on `ctx`. Caller connects `injector.node` into the
+     * analyzer input and feeds bridge PCM via `injector.push(...)`.
+     */
+    async function createPcmInjector(ctx) {
+        await ensureModule(ctx);
+        const node = new AudioWorkletNode(ctx, PROCESSOR_NAME, {
+            numberOfInputs: 0,
+            numberOfOutputs: 1,
+            outputChannelCount: [1],
+        });
+        let disposed = false;
+        return {
+            node,
+            push(samples) {
+                if (disposed)
+                    return;
+                // Transfer the underlying buffer to avoid a copy across the thread.
+                node.port.postMessage(samples, [samples.buffer]);
+            },
+            dispose() {
+                if (disposed)
+                    return;
+                disposed = true;
+                try {
+                    node.disconnect();
+                }
+                catch {
+                    /* already disconnected */
+                }
+            },
+        };
+    }
+
+    /**
+     * Native-bridge source — consumes system audio from the SJAudioBridge macOS
+     * helper (https://github.com/jayvee6/sj-audio-bridge) over a token-gated
+     * localhost WebSocket, injects it through an AudioWorklet into the EXISTING
+     * analyzer + FramePipeline. Works in EVERY browser (it's just a WebSocket),
+     * including Safari/Firefox where getDisplayMedia audio is unavailable.
+     *
+     * Handshake (wire protocol v1, see nativeBridgeProtocol.ts):
+     *   hello → send auth(token) → ready → binary PCM → injector → analyzer.
+     *
+     * Error mapping → AudioSourceUnavailableError.reason:
+     *   socket never opens / refused        → bridge-unreachable
+     *   closed after auth, before ready     → auth-failed (bad/absent token)
+     *   no hello/ready within timeout       → bridge-unreachable
+     *   stop() during startup               → aborted
+     */
+    const DEFAULT_URL = 'ws://127.0.0.1:17653';
+    function createNativeBridgeSource(opts) {
+        // Not one of the four browser-feature sources — report them false, exactly
+        // like createMicrophoneSource does for the others. Reachability is
+        // discovered at start() (throws bridge-unreachable / auth-failed).
+        const capabilities = {
+            mediaElement: false,
+            microphone: false,
+            displayMedia: false,
+            file: false,
+        };
+        const url = opts.url ?? DEFAULT_URL;
+        const readyTimeoutMs = opts.readyTimeoutMs ?? 5000;
+        let ws = null;
+        let injector = null;
+        return createBaseSource({
+            kind: 'nativeBridge',
+            capabilities,
+            analyzer: opts,
+            ticker: opts.ticker,
+            onStart: ({ ctx, analyzerInput }) => new Promise((resolve, reject) => {
+                if (typeof WebSocket === 'undefined') {
+                    reject(new AudioSourceUnavailableError('nativeBridge', 'bridge-unreachable', 'WebSocket is not available in this environment'));
+                    return;
+                }
+                let settled = false;
+                let sentAuth = false;
+                const fail = (reason, msg) => {
+                    if (settled)
+                        return;
+                    settled = true;
+                    clearTimeout(timer);
+                    try {
+                        ws?.close();
+                    }
+                    catch {
+                        /* noop */
+                    }
+                    reject(new AudioSourceUnavailableError('nativeBridge', reason, msg));
+                };
+                const timer = setTimeout(() => fail('bridge-unreachable', `no "ready" within ${readyTimeoutMs}ms`), readyTimeoutMs);
+                let socket;
+                try {
+                    socket = new WebSocket(url);
+                }
+                catch (e) {
+                    clearTimeout(timer);
+                    reject(new AudioSourceUnavailableError('nativeBridge', 'bridge-unreachable', e instanceof Error ? e.message : String(e)));
+                    return;
+                }
+                ws = socket;
+                socket.binaryType = 'arraybuffer';
+                socket.onmessage = (ev) => {
+                    let msg;
+                    try {
+                        msg = decodeBridgeMessage(ev.data);
+                    }
+                    catch {
+                        return; // ignore undecodable frames
+                    }
+                    if (msg.kind === 'hello') {
+                        sentAuth = true;
+                        socket.send(buildAuthMessage(opts.token));
+                    }
+                    else if (msg.kind === 'ready') {
+                        void (async () => {
+                            try {
+                                const inj = await createPcmInjector(ctx);
+                                injector = inj;
+                                inj.node.connect(analyzerInput);
+                                if (settled) {
+                                    inj.dispose(); // stop() raced us
+                                    return;
+                                }
+                                settled = true;
+                                clearTimeout(timer);
+                                resolve();
+                            }
+                            catch (e) {
+                                fail('bridge-unreachable', e instanceof Error ? e.message : 'injector init failed');
+                            }
+                        })();
+                    }
+                    else if (msg.kind === 'pcm') {
+                        injector?.push(msg.samples);
+                    }
+                };
+                socket.onerror = () => {
+                    // Browsers don't expose connect-refused detail; classify by phase.
+                    fail(sentAuth ? 'auth-failed' : 'bridge-unreachable', 'WebSocket error');
+                };
+                socket.onclose = () => {
+                    // Closed before ready → if we'd authed, the bridge rejected the
+                    // token; otherwise it was never reachable / handshake stalled.
+                    if (!settled)
+                        fail(sentAuth ? 'auth-failed' : 'bridge-unreachable');
+                };
+            }),
+            onStop: () => {
+                try {
+                    injector?.dispose();
+                }
+                catch {
+                    /* noop */
+                }
+                injector = null;
+                try {
+                    ws?.close();
+                }
+                catch {
+                    /* noop */
+                }
+                ws = null;
+            },
+        });
+    }
+
+    /**
      * Pure, synchronous feature detection — no side effects, no prompts, no
      * async work. Callers can use this to show/hide UI (e.g. "Capture Tab"
      * buttons) without performing any permission request.
@@ -1142,6 +1469,8 @@
      * Fallback chain default: `['displayMedia', 'microphone', 'file']` — tab audio
      * if available (Chromium desktop), otherwise mic, otherwise file upload.
      */
+    /** The four synchronously feature-detectable kinds (keys of Capabilities). */
+    const isBrowserCap = (k) => k === 'mediaElement' || k === 'microphone' || k === 'displayMedia' || k === 'file';
     const DEFAULT_CHAIN = ['displayMedia', 'microphone', 'file'];
     function createAudioEngine(opts = {}) {
         const baseChain = opts.fallbackChain ?? DEFAULT_CHAIN.slice();
@@ -1172,6 +1501,15 @@
                         throw new AudioSourceUnavailableError('file', 'unsupported', 'AudioEngineOptions.file was not provided');
                     }
                     return createFileSource(opts.file, opts.analyzer);
+                case 'nativeBridge':
+                    if (!opts.nativeBridge?.token) {
+                        throw new AudioSourceUnavailableError('nativeBridge', 'unsupported', 'AudioEngineOptions.nativeBridge.token was not provided');
+                    }
+                    return createNativeBridgeSource({
+                        token: opts.nativeBridge.token,
+                        url: opts.nativeBridge.url,
+                        ...opts.analyzer,
+                    });
             }
         };
         const attach = async (kind) => {
@@ -1210,12 +1548,19 @@
                 // Fast-skip: if static capability says false AND caller didn't force it
                 // via preferredSource, skip. (Still try if explicitly preferred, so the
                 // caller can see the real error.)
-                if (!capabilities[kind] && opts.preferredSource !== kind)
+                // nativeBridge has no synchronous capability — its reachability is only
+                // known at start(); never fast-skip it on static caps.
+                if (isBrowserCap(kind) &&
+                    !capabilities[kind] &&
+                    opts.preferredSource !== kind) {
                     continue;
-                // Fast-skip: mediaElement / file require a payload.
+                }
+                // Fast-skip: payload-requiring kinds with no payload provided.
                 if (kind === 'mediaElement' && !opts.mediaElement)
                     continue;
                 if (kind === 'file' && !opts.file)
+                    continue;
+                if (kind === 'nativeBridge' && !opts.nativeBridge?.token)
                     continue;
                 try {
                     await attach(kind);
@@ -1277,7 +1622,7 @@
      * unified `createAudioEngine` orchestrator with graceful fallback. Ships as
      * ESM + CJS + UMD (global: `window.SJAudio`).
      */
-    const version = '0.1.0';
+    const version = '0.2.0';
 
     exports.AudioSourceUnavailableError = AudioSourceUnavailableError;
     exports.createAudioEngine = createAudioEngine;
@@ -1285,6 +1630,7 @@
     exports.createFileSource = createFileSource;
     exports.createMediaElementSource = createMediaElementSource;
     exports.createMicrophoneSource = createMicrophoneSource;
+    exports.createNativeBridgeSource = createNativeBridgeSource;
     exports.detectCapabilities = detectCapabilities;
     exports.isLikelyChromium = isLikelyChromium;
     exports.version = version;

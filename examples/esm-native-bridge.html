@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SJAudio — Native bridge demo</title>
+    <style>
+      body { font: 14px/1.4 system-ui; margin: 24px; background: #0b0b10; color: #eaeaf0; }
+      input { padding: 9px 12px; font: 13px ui-monospace, monospace; width: 320px;
+              background: #16161f; color: #eaeaf0; border: 1px solid #333; border-radius: 4px; }
+      button { padding: 10px 20px; font-size: 14px; background: #a855f7; color: white;
+               border: 0; border-radius: 4px; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      .bars { display: flex; gap: 2px; height: 200px; align-items: flex-end; margin-top: 20px; }
+      .bar { flex: 1; background: linear-gradient(to top, #10b981, #a855f7); transition: height 16ms linear; }
+      .err { color: #ef4444; margin-top: 16px; min-height: 1.4em; }
+      .ok  { color: #10b981; }
+      code { background: #16161f; padding: 2px 6px; border-radius: 3px; }
+      .hint { color: #8a8a99; margin: 8px 0 18px; }
+    </style>
+  </head>
+  <body>
+    <h1>SJAudio — Native bridge (system audio, every browser)</h1>
+    <p class="hint">
+      Captures whatever audio is playing on the machine via
+      <a href="https://github.com/jayvee6/sj-audio-bridge">SJAudioBridge</a>
+      (the notarized macOS menubar helper) over a token-gated localhost
+      WebSocket. Works in Safari/Firefox/Chrome alike — the page just reads a
+      socket. <br />
+      1. Launch SJAudioBridge. 2. Menubar ▸ <b>Copy Connection Token</b>.
+      3. Paste below. 4. Connect. 5. Play music anywhere.
+    </p>
+    <input id="token" placeholder="paste connection token" autocomplete="off" />
+    <button id="start">Connect</button>
+    <button id="stop" disabled>Disconnect</button>
+    <div class="bars" id="bars"></div>
+    <div class="err" id="err"></div>
+
+    <script type="module">
+      import { createNativeBridgeSource } from '../dist/sj-audio.esm.js';
+
+      const barsEl = document.getElementById('bars');
+      const bars = Array.from({ length: 32 }, () => {
+        const b = document.createElement('div');
+        b.className = 'bar';
+        b.style.height = '2px';
+        barsEl.appendChild(b);
+        return b;
+      });
+
+      let source = null;
+      const errEl = document.getElementById('err');
+
+      document.getElementById('start').addEventListener('click', async () => {
+        const token = document.getElementById('token').value.trim();
+        if (!token) { errEl.textContent = 'Paste the connection token first.'; return; }
+        source = createNativeBridgeSource({ token });
+        source.onFrame((f) => {
+          for (let i = 0; i < 32; i++) {
+            bars[i].style.height = `${Math.max(2, f.magnitudesSmooth[i] * 200)}px`;
+          }
+        });
+        try {
+          await source.start();
+          document.getElementById('start').disabled = true;
+          document.getElementById('stop').disabled = false;
+          errEl.className = 'ok';
+          errEl.textContent = 'Connected — visualizing system audio.';
+        } catch (err) {
+          errEl.className = 'err';
+          const r = err.reason ?? 'unknown';
+          errEl.textContent =
+            r === 'auth-failed'
+              ? 'Bad token — re-copy it from the SJAudioBridge menubar.'
+              : r === 'bridge-unreachable'
+                ? 'SJAudioBridge not reachable — is the app running and capturing?'
+                : `Native bridge unavailable (${r}): ${err.message}`;
+        }
+      });
+
+      document.getElementById('stop').addEventListener('click', () => {
+        source?.stop();
+        document.getElementById('start').disabled = false;
+        document.getElementById('stop').disabled = true;
+        errEl.className = '';
+        errEl.textContent = '';
+      });
+    </script>
+  </body>
+</html>

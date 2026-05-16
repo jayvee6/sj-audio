@@ -52,7 +52,7 @@ interface Capabilities {
     file: boolean;
 }
 /** Discriminator for `AudioSource.kind` and `AudioSourceUnavailableError.kind`. */
-type AudioSourceKind = 'mediaElement' | 'microphone' | 'displayMedia' | 'file';
+type AudioSourceKind = 'mediaElement' | 'microphone' | 'displayMedia' | 'file' | 'nativeBridge';
 /** Callback for frame subscription. Returned Unsubscribe detaches the listener. */
 type FrameListener = (frame: AudioFrame) => void;
 type Unsubscribe = () => void;
@@ -79,7 +79,7 @@ interface AudioSource {
     setViewport(width: number, height: number): void;
 }
 /** Why an adapter cannot run in the current environment / under current conditions. */
-type AudioSourceUnavailableReason = 'unsupported' | 'permission-denied' | 'no-audio-track' | 'decode-failed' | 'aborted';
+type AudioSourceUnavailableReason = 'unsupported' | 'permission-denied' | 'no-audio-track' | 'decode-failed' | 'bridge-unreachable' | 'auth-failed' | 'aborted';
 declare class AudioSourceUnavailableError extends Error {
     readonly kind: AudioSourceKind;
     readonly reason: AudioSourceUnavailableReason;
@@ -110,6 +110,11 @@ interface AudioEngineOptions {
     mediaElement?: HTMLMediaElement;
     /** Required if `file` is in the chain. */
     file?: Blob | File;
+    /** Required if `nativeBridge` is in the chain (SJAudioBridge token + url). */
+    nativeBridge?: {
+        token: string;
+        url?: string;
+    };
     /** Analyzer options applied to whichever source the engine picks. */
     analyzer?: AnalyzerOptions;
 }
@@ -237,6 +242,35 @@ interface FileSourceOptions extends AnalyzerOptions {
 declare function createFileSource(file: Blob | File, opts?: FileSourceOptions): AudioSource;
 
 /**
+ * Native-bridge source — consumes system audio from the SJAudioBridge macOS
+ * helper (https://github.com/jayvee6/sj-audio-bridge) over a token-gated
+ * localhost WebSocket, injects it through an AudioWorklet into the EXISTING
+ * analyzer + FramePipeline. Works in EVERY browser (it's just a WebSocket),
+ * including Safari/Firefox where getDisplayMedia audio is unavailable.
+ *
+ * Handshake (wire protocol v1, see nativeBridgeProtocol.ts):
+ *   hello → send auth(token) → ready → binary PCM → injector → analyzer.
+ *
+ * Error mapping → AudioSourceUnavailableError.reason:
+ *   socket never opens / refused        → bridge-unreachable
+ *   closed after auth, before ready     → auth-failed (bad/absent token)
+ *   no hello/ready within timeout       → bridge-unreachable
+ *   stop() during startup               → aborted
+ */
+
+interface NativeBridgeSourceOptions extends AnalyzerOptions {
+    /** Per-launch token (menubar “Copy Connection Token”). Required. */
+    token: string;
+    /** Bridge endpoint. Default `ws://127.0.0.1:17653`. */
+    url?: string;
+    /** Milliseconds to wait for `ready` before failing. Default 5000. */
+    readyTimeoutMs?: number;
+    /** Test hook. */
+    ticker?: Ticker;
+}
+declare function createNativeBridgeSource(opts: NativeBridgeSourceOptions): AudioSource;
+
+/**
  * Pure, synchronous feature detection — no side effects, no prompts, no
  * async work. Callers can use this to show/hide UI (e.g. "Capture Tab"
  * buttons) without performing any permission request.
@@ -266,7 +300,7 @@ declare function createAudioEngine(opts?: AudioEngineOptions): AudioEngine;
  * unified `createAudioEngine` orchestrator with graceful fallback. Ships as
  * ESM + CJS + UMD (global: `window.SJAudio`).
  */
-declare const version = "0.1.0";
+declare const version = "0.2.0";
 
-export { AudioSourceUnavailableError, createAudioEngine, createDisplayMediaSource, createFileSource, createMediaElementSource, createMicrophoneSource, detectCapabilities, isLikelyChromium, version };
-export type { AnalyzerOptions, AudioEngine, AudioEngineOptions, AudioFrame, AudioSource, AudioSourceKind, AudioSourceUnavailableReason, Capabilities, FrameListener, Unsubscribe };
+export { AudioSourceUnavailableError, createAudioEngine, createDisplayMediaSource, createFileSource, createMediaElementSource, createMicrophoneSource, createNativeBridgeSource, detectCapabilities, isLikelyChromium, version };
+export type { AnalyzerOptions, AudioEngine, AudioEngineOptions, AudioFrame, AudioSource, AudioSourceKind, AudioSourceUnavailableReason, Capabilities, FrameListener, NativeBridgeSourceOptions, Unsubscribe };
