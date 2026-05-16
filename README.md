@@ -18,7 +18,7 @@ Plus **`detectCapabilities()`** for synchronous, side-effect-free feature detect
 ### Via CDN (recommended for `<script>`-style integration)
 
 ```html
-<script src="https://cdn.jsdelivr.net/gh/joeyvillarreal/sj-audio@v0.1.0/dist/sj-audio.umd.js"></script>
+<script src="https://cdn.jsdelivr.net/gh/jayvee6/sj-audio@v0.1.0/dist/sj-audio.umd.js"></script>
 <script>
   const engine = SJAudio.createAudioEngine({
     mediaElement: document.querySelector('audio'),
@@ -33,7 +33,7 @@ Plus **`detectCapabilities()`** for synchronous, side-effect-free feature detect
 ### Via ESM
 
 ```js
-import { createAudioEngine } from 'https://cdn.jsdelivr.net/gh/joeyvillarreal/sj-audio@v0.1.0/dist/sj-audio.esm.js';
+import { createAudioEngine } from 'https://cdn.jsdelivr.net/gh/jayvee6/sj-audio@v0.1.0/dist/sj-audio.esm.js';
 ```
 
 ## Per-source recipes
