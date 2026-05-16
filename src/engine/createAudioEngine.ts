@@ -22,7 +22,12 @@ import { createMediaElementSource } from '../sources/createMediaElementSource.js
 import { createMicrophoneSource } from '../sources/createMicrophoneSource.js';
 import { createDisplayMediaSource } from '../sources/createDisplayMediaSource.js';
 import { createFileSource } from '../sources/createFileSource.js';
+import { createNativeBridgeSource } from '../sources/createNativeBridgeSource.js';
 import { detectCapabilities } from './detectCapabilities.js';
+
+/** The four synchronously feature-detectable kinds (keys of Capabilities). */
+const isBrowserCap = (k: AudioSourceKind): k is keyof Capabilities =>
+  k === 'mediaElement' || k === 'microphone' || k === 'displayMedia' || k === 'file';
 
 const DEFAULT_CHAIN: AudioSourceKind[] = ['displayMedia', 'microphone', 'file'];
 
@@ -65,6 +70,19 @@ export function createAudioEngine(opts: AudioEngineOptions = {}): AudioEngine {
           );
         }
         return createFileSource(opts.file, opts.analyzer);
+      case 'nativeBridge':
+        if (!opts.nativeBridge?.token) {
+          throw new AudioSourceUnavailableError(
+            'nativeBridge',
+            'unsupported',
+            'AudioEngineOptions.nativeBridge.token was not provided',
+          );
+        }
+        return createNativeBridgeSource({
+          token: opts.nativeBridge.token,
+          url: opts.nativeBridge.url,
+          ...opts.analyzer,
+        });
     }
   };
 
@@ -104,10 +122,19 @@ export function createAudioEngine(opts: AudioEngineOptions = {}): AudioEngine {
       // Fast-skip: if static capability says false AND caller didn't force it
       // via preferredSource, skip. (Still try if explicitly preferred, so the
       // caller can see the real error.)
-      if (!capabilities[kind] && opts.preferredSource !== kind) continue;
-      // Fast-skip: mediaElement / file require a payload.
+      // nativeBridge has no synchronous capability — its reachability is only
+      // known at start(); never fast-skip it on static caps.
+      if (
+        isBrowserCap(kind) &&
+        !capabilities[kind] &&
+        opts.preferredSource !== kind
+      ) {
+        continue;
+      }
+      // Fast-skip: payload-requiring kinds with no payload provided.
       if (kind === 'mediaElement' && !opts.mediaElement) continue;
       if (kind === 'file' && !opts.file) continue;
+      if (kind === 'nativeBridge' && !opts.nativeBridge?.token) continue;
       try {
         await attach(kind);
         return;

@@ -30,5 +30,7 @@ export {
   isLikelyChromium,
 } from './sources/createDisplayMediaSource.js';
 export { createFileSource } from './sources/createFileSource.js';
+export { createNativeBridgeSource } from './sources/createNativeBridgeSource.js';
+export type { NativeBridgeSourceOptions } from './sources/createNativeBridgeSource.js';
 export { detectCapabilities } from './engine/detectCapabilities.js';
 export { createAudioEngine } from './engine/createAudioEngine.js';

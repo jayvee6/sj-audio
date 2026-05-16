@@ -71,7 +71,8 @@ export type AudioSourceKind =
   | 'mediaElement'
   | 'microphone'
   | 'displayMedia'
-  | 'file';
+  | 'file'
+  | 'nativeBridge';
 
 /** Callback for frame subscription. Returned Unsubscribe detaches the listener. */
 export type FrameListener = (frame: AudioFrame) => void;
@@ -106,6 +107,8 @@ export type AudioSourceUnavailableReason =
   | 'permission-denied'  // user denied getUserMedia / getDisplayMedia prompt
   | 'no-audio-track'     // stream started but contained no audio track
   | 'decode-failed'      // decodeAudioData rejected the buffer
+  | 'bridge-unreachable' // SJAudioBridge WebSocket refused / not running
+  | 'auth-failed'        // bridge closed the connection — bad/absent token
   | 'aborted';           // caller cancelled / source.stop() mid-start
 
 export class AudioSourceUnavailableError extends Error {
@@ -145,6 +148,8 @@ export interface AudioEngineOptions {
   mediaElement?: HTMLMediaElement;
   /** Required if `file` is in the chain. */
   file?: Blob | File;
+  /** Required if `nativeBridge` is in the chain (SJAudioBridge token + url). */
+  nativeBridge?: { token: string; url?: string };
   /** Analyzer options applied to whichever source the engine picks. */
   analyzer?: AnalyzerOptions;
 }
