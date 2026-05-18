@@ -1,0 +1,325 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>sj-audio — cross-browser audio for music visualization</title>
+<meta name="description" content="A zero-dependency TypeScript library that turns mic, media element, device, tab, or file audio into a clean, smoothed frame for your visualizer. One onFrame callback, every browser." />
+<meta property="og:title" content="sj-audio — audio in, frames out" />
+<meta property="og:description" content="Cross-browser web-audio capture + analysis for music viz. One API across mic / media element / device picker / tab audio / file, with graceful fallback. Zero deps." />
+<meta property="og:type" content="website" />
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0b10'/%3E%3Cg fill='%23a855f7'%3E%3Crect x='5' y='13' width='3' height='6' rx='1.5'/%3E%3Crect x='11' y='8' width='3' height='16' rx='1.5'/%3E%3Crect x='17' y='4' width='3' height='24' rx='1.5'/%3E%3Crect x='23' y='10' width='3' height='12' rx='1.5'/%3E%3C/g%3E%3C/svg%3E" />
+<style>
+  :root{
+    --bg:#0b0b10; --panel:#13131c; --line:#26263a;
+    --ink:#eef0f7; --muted:#9aa0b4; --pur:#a855f7; --grn:#10b981;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  html{scroll-behavior:smooth}
+  body{
+    background:var(--bg); color:var(--ink);
+    font:16px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",system-ui,sans-serif;
+    -webkit-font-smoothing:antialiased; overflow-x:hidden;
+  }
+  a{color:var(--pur); text-decoration:none}
+  a:hover{text-decoration:underline}
+  .wrap{max-width:980px; margin:0 auto; padding:0 24px}
+  h1{font-size:clamp(2.4rem,6vw,4rem); line-height:1.05; letter-spacing:-.02em; font-weight:800}
+  h2{font-size:1.7rem; letter-spacing:-.01em; margin-bottom:.6em; font-weight:700}
+  h3{font-size:1.05rem; font-weight:700; margin-bottom:.3em}
+  p{color:var(--muted)}
+  .grad{background:linear-gradient(110deg,var(--grn),var(--pur));-webkit-background-clip:text;background-clip:text;color:transparent}
+
+  /* hero */
+  header{position:relative; padding:96px 0 64px; text-align:center; overflow:hidden}
+  #viz{position:absolute; inset:auto 0 0 0; height:240px; width:100%; opacity:.45; mask-image:linear-gradient(to top,#000,transparent)}
+  header .wrap{position:relative; z-index:1}
+  .badge{display:inline-block; font-size:.78rem; color:var(--grn);
+    border:1px solid var(--line); border-radius:999px; padding:5px 14px; margin-bottom:24px;
+    background:rgba(16,185,129,.06)}
+  header p.lead{font-size:1.2rem; max-width:640px; margin:18px auto 0; color:#c4c8d8}
+  .cta{display:flex; gap:14px; justify-content:center; flex-wrap:wrap; margin-top:36px}
+  .btn{display:inline-block; padding:13px 26px; border-radius:10px; font-weight:600; font-size:.98rem}
+  .btn.primary{background:var(--pur); color:#fff}
+  .btn.primary:hover{background:#9333ea; text-decoration:none}
+  .btn.ghost{border:1px solid var(--line); color:var(--ink)}
+  .btn.ghost:hover{border-color:var(--pur); text-decoration:none}
+  .meta{margin-top:22px; font-size:.85rem; color:var(--muted)}
+
+  section{padding:60px 0; border-top:1px solid var(--line)}
+  .lead-row{display:grid; grid-template-columns:1fr 1fr; gap:40px; align-items:start}
+  @media(max-width:760px){.lead-row{grid-template-columns:1fr}}
+  pre{background:var(--panel); border:1px solid var(--line); border-radius:12px;
+    padding:18px 20px; overflow-x:auto; font:13px/1.7 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:#d6d9e6}
+  code{font:13px ui-monospace,SFMono-Regular,Menlo,monospace; color:#e7c6ff}
+  pre code{color:inherit}
+  pre+pre{margin-top:14px}
+  .diagram{font:12.5px/1.7 ui-monospace,Menlo,monospace; white-space:pre; color:var(--muted);
+    background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:22px; overflow-x:auto}
+  .cards{display:grid; grid-template-columns:repeat(3,1fr); gap:18px}
+  @media(max-width:760px){.cards{grid-template-columns:1fr}}
+  .card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:22px}
+  .card h3{color:var(--ink)}
+  .card p{font-size:.92rem}
+  .note{border-left:3px solid var(--pur); background:rgba(168,85,247,.06);
+    padding:14px 18px; border-radius:0 10px 10px 0; font-size:.92rem; color:#c4c8d8; margin-top:20px}
+  footer{padding:48px 0 72px; border-top:1px solid var(--line); text-align:center; color:var(--muted); font-size:.88rem}
+  .seclist{list-style:none}
+  .seclist li{padding:8px 0 8px 26px; position:relative; color:#c4c8d8; font-size:.95rem}
+  .seclist li::before{content:"✓"; position:absolute; left:0; color:var(--grn); font-weight:700}
+  .seclist li code{color:#e7c6ff}
+</style>
+</head>
+<body>
+
+<header>
+  <canvas id="viz" aria-hidden="true"></canvas>
+  <div class="wrap">
+    <span class="badge">MIT · Zero dependencies · TypeScript · ESM / CJS / UMD</span>
+    <h1>Audio in, <span class="grad">frames out</span></h1>
+    <p class="lead">
+      A small cross-browser library that turns <strong>any</strong> audio
+      source — mic, an <code>&lt;audio&gt;</code> element, a picked input
+      device, a browser tab, a dropped file — into one clean, smoothed
+      <code>AudioFrame</code> your visualizer reads. The same callback,
+      every browser. No build, no dependencies.
+    </p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/jayvee6/sj-audio">View on GitHub</a>
+      <a class="btn ghost" href="https://github.com/jayvee6/sj-audio/tree/main/examples">Browse examples</a>
+    </div>
+    <div class="meta">Pairs with any Canvas / WebGL / WebGPU viz — one <code>onFrame</code> callback.</div>
+  </div>
+</header>
+
+<section id="why">
+  <div class="wrap lead-row">
+    <div>
+      <h2>Why it exists</h2>
+      <p>
+        Every music visualizer needs the same boring thing first: a clean,
+        AGC'd, smoothed frequency + waveform + beat frame — cross-browser,
+        without re-solving <code>AudioContext</code> resume quirks, Safari's
+        <code>webkitAudioContext</code>, or each capture API's edge cases.
+      </p>
+      <p style="margin-top:14px">
+        sj-audio <em>is</em> that layer. Five source adapters share one
+        analysis pipeline and emit one stable <code>AudioFrame</code>, so
+        your viz code never cares where the audio came from — and a unified
+        engine falls back through the chain until one source works.
+      </p>
+    </div>
+    <div>
+      <div class="diagram">┌─ source adapter ─────────────────────────────┐
+│  mediaElement · microphone · device         │
+│  displayMedia · file                        │
+└───────────────────────┬──────────────────────┘
+                        │  Web Audio
+┌────────────────────────▼──────────────────────┐
+│  AudioContext → AnalyserNode → FramePipeline   │
+│   AGC · 32 mel bands · beat · rolling BPM      │
+└───────────────────────┬──────────────────────┘
+                        │  ~60 fps
+┌────────────────────────▼──────────────────────┐
+│  onFrame(frame) → your Canvas / WebGL / WebGPU │
+└────────────────────────────────────────────────┘</div>
+    </div>
+  </div>
+</section>
+
+<section id="install">
+  <div class="wrap">
+    <h2>Drop it in</h2>
+    <p style="margin-bottom:18px">
+      No bundler required. Pull the UMD build off the CDN for a plain
+      <code>&lt;script&gt;</code>, or import the ESM build directly.
+    </p>
+<pre><code>&lt;script src="https://cdn.jsdelivr.net/gh/jayvee6/sj-audio@latest/dist/sj-audio.umd.js"&gt;&lt;/script&gt;
+&lt;script&gt;
+  const engine = SJAudio.createAudioEngine({
+    mediaElement: document.querySelector('audio'),
+  });
+  await engine.start();
+  engine.onFrame((f) =&gt; drawBars(f.magnitudesSmooth));
+&lt;/script&gt;</code></pre>
+<pre><code>import { createAudioEngine } from
+  'https://cdn.jsdelivr.net/gh/jayvee6/sj-audio@latest/dist/sj-audio.esm.js';</code></pre>
+    <div class="note">
+      <code>@latest</code> tracks the newest release tag. Pin a specific
+      version (e.g. <code>@v0.2.0</code>) in production so a future release
+      can't shift behaviour under you.
+    </div>
+  </div>
+</section>
+
+<section id="use">
+  <div class="wrap">
+    <h2>One callback in the browser</h2>
+    <p style="margin-bottom:18px">
+      Pick a source directly, or hand the engine a fallback chain and let
+      it choose the first that works. Listeners survive a runtime
+      <code>switchTo()</code>.
+    </p>
+<pre><code>import { createAudioEngine } from 'sj-audio';
+
+const engine = createAudioEngine({
+  fallbackChain: ['mediaElement', 'microphone', 'file'],
+  mediaElement: document.querySelector('audio'),
+});
+
+await engine.start();              // tries in order; first success wins
+console.log(engine.activeKind);    // 'mediaElement' | 'microphone' | …
+
+engine.onFrame((f) =&gt; {
+  drawBars(f.magnitudesSmooth);    // 32 EMA-smoothed mel bands
+  if (f.isBeatNow) flash();        // onset this frame
+});</code></pre>
+  </div>
+</section>
+
+<section id="sources">
+  <div class="wrap">
+    <h2>Five sources, one frame</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>Media element</h3>
+        <p>Analyze any <code>&lt;audio&gt;</code> / <code>&lt;video&gt;</code>. Universal; keeps play / pause / seek.</p>
+      </div>
+      <div class="card">
+        <h3>Microphone</h3>
+        <p><code>getUserMedia</code> — works everywhere. iOS Safari is quirky; the library handles the resume dance for you.</p>
+      </div>
+      <div class="card">
+        <h3>Device picker + autodetect</h3>
+        <p>Served-site, zero install: enumerate the visitor's inputs, let them pick — or autodetect the one that's actually playing. Safari + Firefox too.</p>
+      </div>
+      <div class="card">
+        <h3>Tab / display audio</h3>
+        <p><code>getDisplayMedia</code> — Chromium desktop only. The library feature-detects and degrades gracefully elsewhere.</p>
+      </div>
+      <div class="card">
+        <h3>File</h3>
+        <p>Drag-drop or picked <code>File</code> / <code>Blob</code>, analyze-only — one pass through the analyzer.</p>
+      </div>
+      <div class="card">
+        <h3>Unified engine</h3>
+        <p><code>createAudioEngine</code> wires a fallback chain across all of the above, with <code>switchTo()</code> at runtime and persistent listeners.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="frame">
+  <div class="wrap">
+    <h2>What every frame gives you</h2>
+    <p style="margin-bottom:18px">
+      Same shape from every adapter and the engine. Typed-array buffers are
+      <strong>stable references</strong> — mutated in place, so a visualizer
+      can cache them once.
+    </p>
+    <ul class="seclist">
+      <li><code>waveform</code> — 256 samples, time-domain <code>[-1..1]</code>.</li>
+      <li><code>magnitudes</code> / <code>magnitudesSmooth</code> — 32 mel-scale bands, AGC'd (+ EMA, attack 10 ms / release 120 ms).</li>
+      <li><code>bass</code> / <code>mid</code> / <code>treble</code> — pre-summed band energy, <code>[0..1]</code>.</li>
+      <li><code>beatPulse</code> / <code>bpm</code> / <code>isBeatNow</code> — exp-decay onset, rolling-median tempo, per-frame onset flag.</li>
+      <li><code>valence</code> / <code>energy</code> / <code>danceability</code> — mood params, overridable via <code>setMood</code>.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="browsers">
+  <div class="wrap">
+    <h2>Cross-browser, honestly</h2>
+    <p style="margin-bottom:18px">No silent failures — the library tells you what a browser can't do so your UI can adapt.</p>
+    <ul class="seclist">
+      <li>Chrome &amp; Edge desktop — every source, including tab audio.</li>
+      <li>Safari &amp; Firefox desktop — all sources except tab audio (no system-audio path on the open web).</li>
+      <li>Chrome / Safari mobile — media element, microphone, file.</li>
+      <li><code>detectCapabilities()</code> is synchronous and side-effect-free — show / hide the right buttons before you start.</li>
+    </ul>
+  </div>
+</section>
+
+<section id="more">
+  <div class="wrap">
+    <h2>More</h2>
+    <div class="cards">
+      <div class="card">
+        <h3>Source</h3>
+        <p>Zero-dependency TypeScript. Rollup → ESM + CJS + UMD. MIT.</p>
+        <p style="margin-top:10px"><a href="https://github.com/jayvee6/sj-audio">github.com/jayvee6/sj-audio →</a></p>
+      </div>
+      <div class="card">
+        <h3>Examples</h3>
+        <p>Seven self-contained HTML files — one per source, plus a UMD drop-in and the device picker.</p>
+        <p style="margin-top:10px"><a href="https://github.com/jayvee6/sj-audio/tree/main/examples">Open the examples →</a></p>
+      </div>
+      <div class="card">
+        <h3>API reference</h3>
+        <p>Full TypeScript signatures, the <code>AudioFrame</code> spec, per-source recipes and caveats.</p>
+        <p style="margin-top:10px"><a href="https://github.com/jayvee6/sj-audio#api-reference-typescript">Read the README →</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    sj-audio — MIT © Joe Villarreal ·
+    <a href="https://github.com/jayvee6/sj-audio">GitHub</a> ·
+    <a href="https://github.com/jayvee6/sj-audio/tree/main/examples">Examples</a>
+  </div>
+</footer>
+
+<script>
+// Decorative spectrum — synthetic, audio-less. The real thing runs in
+// your sj-audio app; this is just motion for the hero.
+(function () {
+  const c = document.getElementById('viz');
+  const ctx = c.getContext('2d');
+  let W, H, dpr;
+  const N = 56;
+  const phase = Array.from({ length: N }, (_, i) => i * 0.5);
+  function resize() {
+    dpr = Math.min(2, window.devicePixelRatio || 1);
+    W = c.clientWidth; H = c.clientHeight;
+    c.width = W * dpr; c.height = H * dpr;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  }
+  window.addEventListener('resize', resize); resize();
+  let t = 0;
+  function frame() {
+    t += 0.025;
+    ctx.clearRect(0, 0, W, H);
+    const bw = W / N;
+    for (let i = 0; i < N; i++) {
+      const env = Math.pow(1 - i / N, 1.4);
+      const a =
+        (Math.sin(t * 1.7 + phase[i]) * 0.5 + 0.5) * 0.55 +
+        (Math.sin(t * 0.9 + i * 0.3) * 0.5 + 0.5) * 0.45;
+      const h = Math.max(3, env * a * H * 0.95);
+      const x = i * bw + bw * 0.18;
+      const g = ctx.createLinearGradient(0, H, 0, H - h);
+      g.addColorStop(0, '#10b981');
+      g.addColorStop(1, '#a855f7');
+      ctx.fillStyle = g;
+      const w = bw * 0.64, r = Math.min(3, w / 2);
+      const y = H - h;
+      ctx.beginPath();
+      ctx.moveTo(x, H);
+      ctx.lineTo(x, y + r);
+      ctx.quadraticCurveTo(x, y, x + r, y);
+      ctx.lineTo(x + w - r, y);
+      ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+      ctx.lineTo(x + w, H);
+      ctx.closePath();
+      ctx.fill();
+    }
+    requestAnimationFrame(frame);
+  }
+  frame();
+})();
+</script>
+</body>
+</html>
