@@ -72,6 +72,7 @@ export type AudioSourceKind =
   | 'microphone'
   | 'displayMedia'
   | 'file'
+  | 'device'
   | 'nativeBridge';
 
 /** Callback for frame subscription. Returned Unsubscribe detaches the listener. */
@@ -124,8 +125,8 @@ export class AudioSourceUnavailableError extends Error {
 
 /** Tuning knobs for the analyzer pipeline. Sensible defaults ship; override per-source. */
 export interface AnalyzerOptions {
-  /** FFT size. Default 2048. */
-  fftSize?: 1024 | 2048 | 4096;
+  /** FFT size. Default 2048. 8192 matches syzygy's tuner/spectrogram resolution. */
+  fftSize?: 1024 | 2048 | 4096 | 8192;
   /** Number of mel bands. Default 32. Must match consumer viz expectations. */
   bands?: number;
   /** Waveform sample count (downsampled from time-domain). Default 256. */
@@ -148,6 +149,8 @@ export interface AudioEngineOptions {
   mediaElement?: HTMLMediaElement;
   /** Required if `file` is in the chain. */
   file?: Blob | File;
+  /** Required if `device` is in the chain (deviceId from `listAudioInputDevices`). */
+  device?: { deviceId: string };
   /** Required if `nativeBridge` is in the chain (SJAudioBridge token + url). */
   nativeBridge?: { token: string; url?: string };
   /** Analyzer options applied to whichever source the engine picks. */

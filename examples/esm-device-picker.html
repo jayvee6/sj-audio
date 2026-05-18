@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <title>SJAudio — Device picker + autodetect</title>
+    <style>
+      body { font: 14px/1.4 system-ui; margin: 24px; background: #0b0b10; color: #eaeaf0; }
+      button { padding: 10px 20px; font-size: 14px; background: #a855f7; color: white; border: 0; border-radius: 4px; cursor: pointer; }
+      button:disabled { opacity: 0.5; cursor: default; }
+      select { padding: 8px; font-size: 14px; background: #16161e; color: #eaeaf0; border: 1px solid #333; border-radius: 4px; min-width: 280px; }
+      dialog { background: #16161e; color: #eaeaf0; border: 1px solid #333; border-radius: 8px; padding: 24px; }
+      dialog::backdrop { background: rgba(0,0,0,0.6); }
+      .row { display: flex; gap: 8px; align-items: center; margin: 16px 0; }
+      .bars { display: flex; gap: 2px; height: 160px; align-items: flex-end; margin-top: 16px; }
+      .bar { flex: 1; background: linear-gradient(to top, #10b981, #f59e0b); transition: height 16ms linear; }
+      .err { color: #ef4444; margin-top: 16px; }
+      .hint { color: #9090a0; max-width: 640px; }
+    </style>
+  </head>
+  <body>
+    <h1>SJAudio — Device picker + autodetect</h1>
+    <p class="hint">
+      Enumerates every audio <strong>input</strong> and lets you pick one — works on any
+      served HTTPS site, zero install. To visualize <em>system</em> audio, pick an OS
+      loopback device (BlackHole / Stereo&nbsp;Mix / VB-Cable); <strong>Autodetect</strong>
+      "listens" to each input for ~2&nbsp;s and selects the one that's actually playing.
+    </p>
+    <button id="configure">Configure input</button>
+    <button id="stop" disabled>Stop</button>
+    <div class="bars" id="bars"></div>
+    <div class="err" id="err"></div>
+
+    <dialog id="dialog">
+      <h2>Input device</h2>
+      <div class="row">
+        <select id="device-select"><option>Loading…</option></select>
+        <button type="button" id="autodetect" disabled>Autodetect</button>
+      </div>
+      <button type="button" id="start" disabled>Start</button>
+    </dialog>
+
+    <script type="module">
+      import {
+        listAudioInputDevices,
+        detectActiveAudioInput,
+        createDeviceSource,
+      } from '../dist/sj-audio.esm.js';
+
+      const STORAGE_KEY = 'sj-audio-device';
+      const dialog = document.getElementById('dialog');
+      const select = document.getElementById('device-select');
+      const startBtn = document.getElementById('start');
+      const autodetectBtn = document.getElementById('autodetect');
+      const stopBtn = document.getElementById('stop');
+      const errEl = document.getElementById('err');
+
+      const barsEl = document.getElementById('bars');
+      const bars = Array.from({ length: 32 }, () => {
+        const b = document.createElement('div');
+        b.className = 'bar';
+        b.style.height = '2px';
+        barsEl.appendChild(b);
+        return b;
+      });
+
+      let source = null;
+
+      async function populate() {
+        select.innerHTML = '';
+        startBtn.disabled = true;
+        autodetectBtn.disabled = true;
+        try {
+          const devices = await listAudioInputDevices();
+          for (const d of devices) {
+            const opt = document.createElement('option');
+            opt.value = d.deviceId;
+            opt.textContent = d.label;
+            select.appendChild(opt);
+          }
+          const saved = localStorage.getItem(STORAGE_KEY);
+          if (saved && devices.some((d) => d.deviceId === saved)) {
+            select.value = saved;
+          }
+          startBtn.disabled = false;
+          autodetectBtn.disabled = false;
+        } catch (err) {
+          errEl.textContent = `Cannot list devices (${err.reason ?? 'unknown'}): ${err.message}`;
+        }
+      }
+
+      autodetectBtn.addEventListener('click', async () => {
+        startBtn.disabled = true;
+        autodetectBtn.disabled = true;
+        autodetectBtn.textContent = 'Detecting…';
+        try {
+          const best = await detectActiveAudioInput();
+          if (best) select.value = best.deviceId;
+          else errEl.textContent = 'No input is playing audio right now.';
+        } catch (err) {
+          errEl.textContent = `Autodetect failed: ${err.message}`;
+        }
+        autodetectBtn.textContent = 'Autodetect';
+        startBtn.disabled = false;
+        autodetectBtn.disabled = false;
+      });
+
+      startBtn.addEventListener('click', async () => {
+        const deviceId = select.value;
+        localStorage.setItem(STORAGE_KEY, deviceId);
+        errEl.textContent = '';
+        source = createDeviceSource({ deviceId, fftSize: 8192 }); // syzygy-grade resolution
+        source.onFrame((f) => {
+          for (let i = 0; i < 32; i++) {
+            bars[i].style.height = `${Math.max(2, f.magnitudesSmooth[i] * 160)}px`;
+          }
+        });
+        try {
+          await source.start(); // user gesture ✓
+          dialog.close();
+          stopBtn.disabled = false;
+          document.getElementById('configure').disabled = true;
+        } catch (err) {
+          errEl.textContent = `Capture failed (${err.reason ?? 'unknown'}): ${err.message}`;
+        }
+      });
+
+      stopBtn.addEventListener('click', () => {
+        source?.stop();
+        stopBtn.disabled = true;
+        document.getElementById('configure').disabled = false;
+      });
+
+      document.getElementById('configure').addEventListener('click', () => {
+        dialog.showModal();
+        populate();
+      });
+
+      // Open the picker on load (syzygy-style).
+      dialog.showModal();
+      populate();
+    </script>
+  </body>
+</html>

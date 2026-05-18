@@ -1,12 +1,14 @@
 /**
  * SJAudio — cross-browser web audio capture + analysis library for music viz.
  *
- * Four source adapters (mediaElement, microphone, displayMedia, file) plus a
- * unified `createAudioEngine` orchestrator with graceful fallback. Ships as
- * ESM + CJS + UMD (global: `window.SJAudio`).
+ * Source adapters (mediaElement, microphone, displayMedia, file, device,
+ * nativeBridge) plus a unified `createAudioEngine` orchestrator with graceful
+ * fallback. `listAudioInputDevices` / `detectActiveAudioInput` power a
+ * served-site, zero-install device picker. Ships as ESM + CJS + UMD (global:
+ * `window.SJAudio`).
  */
 
-export const version = '0.2.0';
+export const version = '0.3.0';
 
 export type {
   AudioFrame,
@@ -30,6 +32,21 @@ export {
   isLikelyChromium,
 } from './sources/createDisplayMediaSource.js';
 export { createFileSource } from './sources/createFileSource.js';
+export { createDeviceSource } from './sources/createDeviceSource.js';
+export type { DeviceSourceOptions } from './sources/createDeviceSource.js';
+export {
+  listAudioInputDevices,
+  onDeviceChange,
+} from './sources/listAudioInputDevices.js';
+export type { AudioInputDevice } from './sources/listAudioInputDevices.js';
+export {
+  probeAudioInputLevels,
+  detectActiveAudioInput,
+} from './sources/probeAudioInputs.js';
+export type {
+  AudioInputLevel,
+  ProbeOptions,
+} from './sources/probeAudioInputs.js';
 export { createNativeBridgeSource } from './sources/createNativeBridgeSource.js';
 export type { NativeBridgeSourceOptions } from './sources/createNativeBridgeSource.js';
 export { detectCapabilities } from './engine/detectCapabilities.js';

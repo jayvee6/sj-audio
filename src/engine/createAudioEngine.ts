@@ -22,6 +22,7 @@ import { createMediaElementSource } from '../sources/createMediaElementSource.js
 import { createMicrophoneSource } from '../sources/createMicrophoneSource.js';
 import { createDisplayMediaSource } from '../sources/createDisplayMediaSource.js';
 import { createFileSource } from '../sources/createFileSource.js';
+import { createDeviceSource } from '../sources/createDeviceSource.js';
 import { createNativeBridgeSource } from '../sources/createNativeBridgeSource.js';
 import { detectCapabilities } from './detectCapabilities.js';
 
@@ -70,6 +71,18 @@ export function createAudioEngine(opts: AudioEngineOptions = {}): AudioEngine {
           );
         }
         return createFileSource(opts.file, opts.analyzer);
+      case 'device':
+        if (!opts.device?.deviceId) {
+          throw new AudioSourceUnavailableError(
+            'device',
+            'unsupported',
+            'AudioEngineOptions.device.deviceId was not provided',
+          );
+        }
+        return createDeviceSource({
+          deviceId: opts.device.deviceId,
+          ...opts.analyzer,
+        });
       case 'nativeBridge':
         if (!opts.nativeBridge?.token) {
           throw new AudioSourceUnavailableError(
@@ -134,6 +147,7 @@ export function createAudioEngine(opts: AudioEngineOptions = {}): AudioEngine {
       // Fast-skip: payload-requiring kinds with no payload provided.
       if (kind === 'mediaElement' && !opts.mediaElement) continue;
       if (kind === 'file' && !opts.file) continue;
+      if (kind === 'device' && !opts.device?.deviceId) continue;
       if (kind === 'nativeBridge' && !opts.nativeBridge?.token) continue;
       try {
         await attach(kind);

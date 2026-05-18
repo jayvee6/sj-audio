@@ -1,6 +1,6 @@
 {
   "name": "sj-audio",
-  "version": "0.2.0",
+  "version": "0.3.0",
   "description": "Cross-browser web audio capture + analysis library for music visualization. Exposes window.SJAudio.",
   "license": "MIT",
   "author": "Joe Villarreal <joeyvillarreal@me.com>",

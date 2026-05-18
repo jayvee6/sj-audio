@@ -1103,6 +1103,286 @@ function createFileSource(file, opts = {}) {
 }
 
 /**
+ * Explicit audio-INPUT-device source — `getUserMedia` pinned to a chosen
+ * `deviceId` (from `listAudioInputDevices()` / `detectActiveAudioInput()`).
+ *
+ * The served-site, zero-install capture path: any HTTPS page can capture the
+ * input the visitor picks, including an OS loopback device (BlackHole / Stereo
+ * Mix / VB-Cable) for system audio — no native helper required. Mirrors
+ * wwwtyro/syzygy's capture, including browser DSP disabled by default
+ * (noiseSuppression / echoCancellation / autoGainControl wreck music, line-in,
+ * and loopback analysis).
+ *
+ * Omitting `deviceId` captures the system default input (≈ microphone, but
+ * with DSP off).
+ *
+ * Error mapping (identical to the microphone source):
+ *   NotAllowedError / SecurityError       → permission-denied
+ *   NotFoundError / OverconstrainedError  → no-audio-track
+ *   <anything else>                       → unsupported
+ *
+ * Credit: capture approach ported from syzygy by Rye Terrell
+ * (https://github.com/wwwtyro/syzygy).
+ */
+function createDeviceSource(opts = {}) {
+    const capabilities = {
+        mediaElement: false,
+        microphone: typeof navigator !== 'undefined' &&
+            !!navigator.mediaDevices &&
+            typeof navigator.mediaDevices.getUserMedia === 'function',
+        displayMedia: false,
+        file: false,
+    };
+    let stream = null;
+    let streamNode = null;
+    return createBaseSource({
+        kind: 'device',
+        capabilities,
+        analyzer: opts,
+        ticker: opts.ticker,
+        async onStart({ ctx, analyzerInput }) {
+            if (!capabilities.microphone) {
+                throw new AudioSourceUnavailableError('device', 'unsupported', 'getUserMedia is not available in this environment');
+            }
+            const dspOff = opts.disableProcessing !== false;
+            const audio = {
+                ...(dspOff
+                    ? {
+                        noiseSuppression: false,
+                        echoCancellation: false,
+                        autoGainControl: false,
+                    }
+                    : {}),
+                ...opts.constraints,
+            };
+            if (opts.deviceId) {
+                audio.deviceId = { exact: opts.deviceId };
+            }
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio });
+            }
+            catch (err) {
+                const name = err instanceof Error ? err.name : '';
+                if (name === 'NotAllowedError' || name === 'SecurityError') {
+                    throw new AudioSourceUnavailableError('device', 'permission-denied');
+                }
+                if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+                    throw new AudioSourceUnavailableError('device', 'no-audio-track');
+                }
+                throw new AudioSourceUnavailableError('device', 'unsupported', err instanceof Error ? err.message : String(err));
+            }
+            if (stream.getAudioTracks().length === 0) {
+                stream.getTracks().forEach((t) => t.stop());
+                stream = null;
+                throw new AudioSourceUnavailableError('device', 'no-audio-track');
+            }
+            streamNode = ctx.createMediaStreamSource(stream);
+            streamNode.connect(analyzerInput);
+            // Intentionally NOT connected to ctx.destination — echoing input back to
+            // speakers would feed back / double audio the user already hears.
+        },
+        onStop() {
+            if (streamNode) {
+                try {
+                    streamNode.disconnect();
+                }
+                catch {
+                    // already disconnected
+                }
+                streamNode = null;
+            }
+            if (stream) {
+                stream.getTracks().forEach((t) => t.stop());
+                stream = null;
+            }
+        },
+    });
+}
+
+/**
+ * Audio-input device enumeration with label unlock.
+ *
+ * `navigator.mediaDevices.enumerateDevices()` returns blank `label`s until the
+ * page has held a getUserMedia audio stream at least once in the session. We
+ * grab a throwaway stream, stop it immediately, then enumerate — so a picker UI
+ * gets human-readable device names. (Same trick wwwtyro/syzygy uses.)
+ *
+ * This is the served-site, zero-install enumeration primitive: any HTTPS page
+ * can list the visitor's inputs — including OS loopback / virtual devices
+ * (BlackHole / Stereo Mix / VB-Cable) which is how system audio is captured
+ * without a native helper.
+ *
+ * Credit: technique ported from syzygy by Rye Terrell
+ * (https://github.com/wwwtyro/syzygy).
+ */
+function hasMediaDevices() {
+    return (typeof navigator !== 'undefined' &&
+        !!navigator.mediaDevices &&
+        typeof navigator.mediaDevices.enumerateDevices === 'function');
+}
+/**
+ * List connected audio INPUT devices.
+ *
+ * Throws `AudioSourceUnavailableError`:
+ *   'unsupported'       — mediaDevices / enumerateDevices not present
+ *   'permission-denied' — user blocked the one-time label-unlock prompt
+ */
+async function listAudioInputDevices() {
+    if (!hasMediaDevices()) {
+        throw new AudioSourceUnavailableError('device', 'unsupported', 'navigator.mediaDevices.enumerateDevices is not available');
+    }
+    // Label unlock: enumerateDevices() yields empty labels until the page has
+    // held an audio stream once. Grab one, release it immediately.
+    if (typeof navigator.mediaDevices.getUserMedia === 'function') {
+        try {
+            const probe = await navigator.mediaDevices.getUserMedia({ audio: true });
+            probe.getTracks().forEach((t) => t.stop());
+        }
+        catch (err) {
+            const name = err instanceof Error ? err.name : '';
+            if (name === 'NotAllowedError' || name === 'SecurityError') {
+                throw new AudioSourceUnavailableError('device', 'permission-denied');
+            }
+            // NotFoundError (no input hardware) etc — still enumerate; labels just
+            // stay blank but deviceIds remain usable.
+        }
+    }
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    return devices
+        .filter((d) => d.kind === 'audioinput')
+        .map((d) => ({
+        deviceId: d.deviceId,
+        label: d.label || `Audio input (${d.deviceId.slice(0, 8) || 'default'})`,
+        groupId: d.groupId,
+    }));
+}
+/**
+ * Subscribe to hardware add/remove (USB interface plugged, headset connected…).
+ * Returns an unsubscribe fn; a no-op unsubscribe where unsupported.
+ */
+function onDeviceChange(cb) {
+    if (typeof navigator === 'undefined' ||
+        !navigator.mediaDevices ||
+        typeof navigator.mediaDevices.addEventListener !== 'function') {
+        return () => { };
+    }
+    const md = navigator.mediaDevices;
+    md.addEventListener('devicechange', cb);
+    return () => md.removeEventListener('devicechange', cb);
+}
+
+/**
+ * "Listen" to audio inputs and rank them by signal level — the autodetect
+ * primitive (port of wwwtyro/syzygy's "Autodetect" button / `measureDeviceRms`).
+ *
+ * Lets you (or the user) discover which of several inputs — mic, line-in,
+ * BlackHole, Stereo Mix, VB-Cable — is actually playing right now, instead of
+ * guessing from labels. Essential UX for the loopback/system-audio case where
+ * the right device has an opaque name.
+ *
+ * Each probe uses a DEDICATED, throwaway `AudioContext` (never the library
+ * singleton from `shared/audioContext.ts`) so it can be fully closed and never
+ * disturbs a live capture pipeline.
+ *
+ * Credit: RMS autodetect ported from syzygy's `measureDeviceRms` by Rye Terrell
+ * (https://github.com/wwwtyro/syzygy).
+ */
+function resolveAudioContextCtor() {
+    const Ctor = typeof AudioContext !== 'undefined'
+        ? AudioContext
+        : globalThis.webkitAudioContext;
+    if (!Ctor) {
+        throw new AudioSourceUnavailableError('device', 'unsupported', 'AudioContext is not available in this environment');
+    }
+    return Ctor;
+}
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+/**
+ * Open one device, measure mean spectral RMS over the sampling window, then
+ * fully tear down (stop tracks + close the throwaway context). Never throws —
+ * any failure resolves to 0.
+ */
+async function measureDeviceRms(deviceId, samples, intervalMs, signal) {
+    if (signal?.aborted)
+        return 0;
+    if (typeof navigator === 'undefined' ||
+        !navigator.mediaDevices ||
+        typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        return 0;
+    }
+    const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+            deviceId: { exact: deviceId },
+            noiseSuppression: false,
+            echoCancellation: false,
+            autoGainControl: false,
+        },
+    });
+    const Ctor = resolveAudioContextCtor();
+    const ctx = new Ctor();
+    try {
+        const source = ctx.createMediaStreamSource(stream);
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 2048;
+        source.connect(analyser);
+        const data = new Uint8Array(analyser.frequencyBinCount);
+        let total = 0;
+        let taken = 0;
+        for (let i = 0; i < samples; i++) {
+            if (signal?.aborted)
+                break;
+            await sleep(intervalMs);
+            analyser.getByteFrequencyData(data);
+            let sum = 0;
+            for (let j = 0; j < data.length; j++)
+                sum += data[j] * data[j];
+            total += Math.sqrt(sum / data.length);
+            taken++;
+        }
+        return taken > 0 ? total / taken : 0;
+    }
+    finally {
+        stream.getTracks().forEach((t) => t.stop());
+        try {
+            await ctx.close();
+        }
+        catch {
+            // already closed / mock context without close()
+        }
+    }
+}
+/**
+ * Probe every input in parallel and return them sorted by signal level
+ * (loudest first). Per-device failures resolve to rms 0 — the batch never
+ * rejects. Omit `devices` to enumerate first via `listAudioInputDevices()`.
+ */
+async function probeAudioInputLevels(devices, opts = {}) {
+    const list = devices ?? (await listAudioInputDevices());
+    const samples = opts.samples ?? 10;
+    const intervalMs = opts.intervalMs ?? 200;
+    const results = await Promise.all(list.map(async (d) => ({
+        deviceId: d.deviceId,
+        label: d.label,
+        rms: await measureDeviceRms(d.deviceId, samples, intervalMs, opts.signal).catch(() => 0),
+    })));
+    return results.sort((a, b) => b.rms - a.rms);
+}
+/**
+ * One-call autodetect: enumerate → probe → return the loudest device with a
+ * non-zero signal, or `null` if every input is silent.
+ */
+async function detectActiveAudioInput(opts = {}) {
+    const devices = await listAudioInputDevices();
+    if (devices.length === 0)
+        return null;
+    const levels = await probeAudioInputLevels(devices, opts);
+    const top = levels.find((l) => l.rms > 0);
+    if (!top)
+        return null;
+    return devices.find((d) => d.deviceId === top.deviceId) ?? null;
+}
+
+/**
  * SJAudioBridge wire protocol v1 — pure decoder/encoder (no WebSocket dep, so
  * it unit-tests in isolation). Mirrors sj-audio-bridge's Swift WSServer.
  *
@@ -1497,6 +1777,14 @@ function createAudioEngine(opts = {}) {
                     throw new AudioSourceUnavailableError('file', 'unsupported', 'AudioEngineOptions.file was not provided');
                 }
                 return createFileSource(opts.file, opts.analyzer);
+            case 'device':
+                if (!opts.device?.deviceId) {
+                    throw new AudioSourceUnavailableError('device', 'unsupported', 'AudioEngineOptions.device.deviceId was not provided');
+                }
+                return createDeviceSource({
+                    deviceId: opts.device.deviceId,
+                    ...opts.analyzer,
+                });
             case 'nativeBridge':
                 if (!opts.nativeBridge?.token) {
                     throw new AudioSourceUnavailableError('nativeBridge', 'unsupported', 'AudioEngineOptions.nativeBridge.token was not provided');
@@ -1556,6 +1844,8 @@ function createAudioEngine(opts = {}) {
                 continue;
             if (kind === 'file' && !opts.file)
                 continue;
+            if (kind === 'device' && !opts.device?.deviceId)
+                continue;
             if (kind === 'nativeBridge' && !opts.nativeBridge?.token)
                 continue;
             try {
@@ -1614,20 +1904,27 @@ function createAudioEngine(opts = {}) {
 /**
  * SJAudio — cross-browser web audio capture + analysis library for music viz.
  *
- * Four source adapters (mediaElement, microphone, displayMedia, file) plus a
- * unified `createAudioEngine` orchestrator with graceful fallback. Ships as
- * ESM + CJS + UMD (global: `window.SJAudio`).
+ * Source adapters (mediaElement, microphone, displayMedia, file, device,
+ * nativeBridge) plus a unified `createAudioEngine` orchestrator with graceful
+ * fallback. `listAudioInputDevices` / `detectActiveAudioInput` power a
+ * served-site, zero-install device picker. Ships as ESM + CJS + UMD (global:
+ * `window.SJAudio`).
  */
-const version = '0.2.0';
+const version = '0.3.0';
 
 exports.AudioSourceUnavailableError = AudioSourceUnavailableError;
 exports.createAudioEngine = createAudioEngine;
+exports.createDeviceSource = createDeviceSource;
 exports.createDisplayMediaSource = createDisplayMediaSource;
 exports.createFileSource = createFileSource;
 exports.createMediaElementSource = createMediaElementSource;
 exports.createMicrophoneSource = createMicrophoneSource;
 exports.createNativeBridgeSource = createNativeBridgeSource;
+exports.detectActiveAudioInput = detectActiveAudioInput;
 exports.detectCapabilities = detectCapabilities;
 exports.isLikelyChromium = isLikelyChromium;
+exports.listAudioInputDevices = listAudioInputDevices;
+exports.onDeviceChange = onDeviceChange;
+exports.probeAudioInputLevels = probeAudioInputLevels;
 exports.version = version;
 //# sourceMappingURL=sj-audio.cjs.js.map

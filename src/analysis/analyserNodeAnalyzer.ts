@@ -31,8 +31,8 @@ export interface AnalyzerReader {
 }
 
 export interface AnalyserNodeAnalyzerOptions {
-  /** Power of two, default 2048. */
-  fftSize?: 1024 | 2048 | 4096;
+  /** Power of two, default 2048. Up to 8192 (≈5.9 Hz/bin @ 48 kHz). */
+  fftSize?: 1024 | 2048 | 4096 | 8192;
   /** AnalyserNode smoothingTimeConstant, default 0.8. Matches musicplayer-viz. */
   smoothingTimeConstant?: number;
 }

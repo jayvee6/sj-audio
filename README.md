@@ -2,9 +2,10 @@
 
 Cross-browser web audio capture + analysis library for music visualization. Zero runtime dependencies. TypeScript. Ships as **ESM + CJS + UMD**.
 
-Four source adapters with their own API:
+Source adapters with their own API:
 - **`createMediaElementSource(el)`** — analyze an `<audio>` / `<video>` element
 - **`createMicrophoneSource(opts?)`** — `getUserMedia` (works everywhere, iOS Safari is messy)
+- **`createDeviceSource(opts?)`** — capture a specific `audioinput` by `deviceId`, DSP off by default. Pairs with **`listAudioInputDevices()`** + **`detectActiveAudioInput()`** for a served-site, zero-install device picker (Safari + Firefox too)
 - **`createDisplayMediaSource(opts?)`** — tab / system audio (**Chromium desktop only**; Safari + Firefox silently ignore the audio flag)
 - **`createFileSource(file)`** — drag-drop / picked `File` / `Blob`, analyze-only
 
@@ -66,13 +67,49 @@ document.querySelector('button').addEventListener('click', async () => {
 });
 ```
 
-To pick a virtual-audio device (BlackHole, Loopback) for macOS system-audio capture:
+To pick a specific input (incl. a loopback device for system audio), use
+`createDeviceSource` + the picker helpers — see the next section.
+
+### Device picker + autodetect (served-site, zero install)
+
+The path for **any HTTPS site, nothing installed** — enumerate the visitor's
+audio inputs, let them pick one, capture it. This is exactly how
+[wwwtyro/syzygy](https://github.com/wwwtyro/syzygy) works.
 
 ```js
-const devices = await navigator.mediaDevices.enumerateDevices();
-const blackHole = devices.find((d) => d.kind === 'audioinput' && /BlackHole/i.test(d.label));
-createMicrophoneSource({ constraints: { deviceId: blackHole.deviceId } });
+import {
+  listAudioInputDevices,   // [{ deviceId, label, groupId }] — labels unlocked for you
+  detectActiveAudioInput,  // "listen" to each input ~2s, return the one that's playing
+  createDeviceSource,
+} from 'sj-audio';
+
+const devices = await listAudioInputDevices();
+// …render <select> from devices, persist choice to localStorage…
+
+// Or skip the guesswork — autodetect the live input:
+const best = await detectActiveAudioInput(); // AudioInputDevice | null
+
+const source = createDeviceSource({ deviceId: best?.deviceId ?? devices[0].deviceId });
+source.onFrame(drawViz);
+await source.start(); // from a user gesture
 ```
+
+`createDeviceSource` disables `noiseSuppression` / `echoCancellation` /
+`autoGainControl` by default (those wreck music, line-in, and loopback
+analysis — pass `{ disableProcessing: false }` to keep browser defaults).
+Omitting `deviceId` captures the system default input.
+
+> **Caveat — this captures *inputs*.** To visualize *system / desktop* audio
+> on a served site the visitor must have an OS loopback device installed
+> (macOS: BlackHole / Loopback; Windows: Stereo Mix / VB-Cable; Linux:
+> PulseAudio/PipeWire `.monitor`). It then appears in `listAudioInputDevices()`
+> and is exactly what **Autodetect** surfaces. The only zero-install,
+> no-loopback paths for system audio remain `displayMedia` (Chromium desktop)
+> and the native bridge (local only). Requires HTTPS (or localhost).
+
+`probeAudioInputLevels(devices?, { samples?, intervalMs?, signal? })` is also
+exported if you want the full ranked level list (e.g. to show a live meter per
+device) rather than just the winner.
 
 ### Display / tab audio (Chromium desktop only)
 
@@ -172,7 +209,7 @@ Typed-array buffers are **stable references** — `frame.magnitudes` is the same
 
 ```ts
 class AudioSourceUnavailableError extends Error {
-  kind:   'mediaElement' | 'microphone' | 'displayMedia' | 'file' | 'nativeBridge';
+  kind:   'mediaElement' | 'microphone' | 'displayMedia' | 'file' | 'device' | 'nativeBridge';
   reason: 'unsupported' | 'permission-denied' | 'no-audio-track'
         | 'decode-failed' | 'bridge-unreachable' | 'auth-failed' | 'aborted';
 }
@@ -212,6 +249,12 @@ import {
   createMicrophoneSource,
   createDisplayMediaSource,
   createFileSource,
+  createDeviceSource,
+  // Device picker (served-site, zero install)
+  listAudioInputDevices,
+  probeAudioInputLevels,
+  detectActiveAudioInput,
+  onDeviceChange,
   // Orchestrator
   createAudioEngine,
   // Detection
@@ -231,7 +274,7 @@ All factories accept `AnalyzerOptions`:
 
 ```ts
 interface AnalyzerOptions {
-  fftSize?: 1024 | 2048 | 4096;  // default 2048
+  fftSize?: 1024 | 2048 | 4096 | 8192;  // default 2048; 8192 = syzygy-grade resolution
   bands?: number;                 // default 32
   waveformSize?: number;          // default 256
   attackMs?: number;              // smoothing attack,  default 10ms
@@ -271,12 +314,34 @@ npm run typecheck # tsc --noEmit
 npm run build     # rollup → dist/{esm,cjs,umd}.js + index.d.ts
 ```
 
-Examples: open `examples/*.html` with a local static server (CORS friendliness):
+Examples: build first, then serve the repo root and open an example.
+`http://localhost` counts as a secure context, so `getUserMedia` device labels
+and capture work without HTTPS; any non-localhost origin (LAN IP, deployed)
+needs HTTPS.
 
 ```bash
-npx serve .
-# then visit http://localhost:3000/examples/esm-mediaelement.html
+npm run build
+npx serve . -l 3000
+# Device picker + autodetect (best in Chrome/Edge desktop):
+#   http://localhost:3000/examples/esm-device-picker.html
+# Others: esm-microphone | esm-displaymedia | esm-mediaelement | esm-file
 ```
+
+The device-picker demo reproduces syzygy's flow: a dialog enumerates every
+audio input, **Autodetect** samples each for ~2 s and selects the one that's
+playing, and your choice is saved to `localStorage`. To visualize system audio,
+pick an OS loopback device (BlackHole / Stereo Mix / VB-Cable).
+
+## Acknowledgements
+
+The device picker — `listAudioInputDevices`, `detectActiveAudioInput` /
+`probeAudioInputLevels`, and the DSP-off `createDeviceSource` capture — is
+ported from the audio-input approach in
+**[syzygy](https://github.com/wwwtyro/syzygy)** by **Rye Terrell**
+([@wwwtyro](https://github.com/wwwtyro)): the `getUserMedia` label-unlock before
+`enumerateDevices`, the RMS "Autodetect" that samples every input and picks the
+one with signal, and disabling `noiseSuppression` / `echoCancellation` /
+`autoGainControl` for clean music / line-in / loopback capture. Thanks, Rye.
 
 ## License
 

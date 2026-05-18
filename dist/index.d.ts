@@ -52,7 +52,7 @@ interface Capabilities {
     file: boolean;
 }
 /** Discriminator for `AudioSource.kind` and `AudioSourceUnavailableError.kind`. */
-type AudioSourceKind = 'mediaElement' | 'microphone' | 'displayMedia' | 'file' | 'nativeBridge';
+type AudioSourceKind = 'mediaElement' | 'microphone' | 'displayMedia' | 'file' | 'device' | 'nativeBridge';
 /** Callback for frame subscription. Returned Unsubscribe detaches the listener. */
 type FrameListener = (frame: AudioFrame) => void;
 type Unsubscribe = () => void;
@@ -87,8 +87,8 @@ declare class AudioSourceUnavailableError extends Error {
 }
 /** Tuning knobs for the analyzer pipeline. Sensible defaults ship; override per-source. */
 interface AnalyzerOptions {
-    /** FFT size. Default 2048. */
-    fftSize?: 1024 | 2048 | 4096;
+    /** FFT size. Default 2048. 8192 matches syzygy's tuner/spectrogram resolution. */
+    fftSize?: 1024 | 2048 | 4096 | 8192;
     /** Number of mel bands. Default 32. Must match consumer viz expectations. */
     bands?: number;
     /** Waveform sample count (downsampled from time-domain). Default 256. */
@@ -110,6 +110,10 @@ interface AudioEngineOptions {
     mediaElement?: HTMLMediaElement;
     /** Required if `file` is in the chain. */
     file?: Blob | File;
+    /** Required if `device` is in the chain (deviceId from `listAudioInputDevices`). */
+    device?: {
+        deviceId: string;
+    };
     /** Required if `nativeBridge` is in the chain (SJAudioBridge token + url). */
     nativeBridge?: {
         token: string;
@@ -242,6 +246,130 @@ interface FileSourceOptions extends AnalyzerOptions {
 declare function createFileSource(file: Blob | File, opts?: FileSourceOptions): AudioSource;
 
 /**
+ * Explicit audio-INPUT-device source — `getUserMedia` pinned to a chosen
+ * `deviceId` (from `listAudioInputDevices()` / `detectActiveAudioInput()`).
+ *
+ * The served-site, zero-install capture path: any HTTPS page can capture the
+ * input the visitor picks, including an OS loopback device (BlackHole / Stereo
+ * Mix / VB-Cable) for system audio — no native helper required. Mirrors
+ * wwwtyro/syzygy's capture, including browser DSP disabled by default
+ * (noiseSuppression / echoCancellation / autoGainControl wreck music, line-in,
+ * and loopback analysis).
+ *
+ * Omitting `deviceId` captures the system default input (≈ microphone, but
+ * with DSP off).
+ *
+ * Error mapping (identical to the microphone source):
+ *   NotAllowedError / SecurityError       → permission-denied
+ *   NotFoundError / OverconstrainedError  → no-audio-track
+ *   <anything else>                       → unsupported
+ *
+ * Credit: capture approach ported from syzygy by Rye Terrell
+ * (https://github.com/wwwtyro/syzygy).
+ */
+
+interface DeviceSourceOptions extends AnalyzerOptions {
+    /** Target `audioinput` deviceId. Omit → system default input. */
+    deviceId?: string;
+    /**
+     * Extra getUserMedia audio constraints, shallow-merged OVER the DSP-off
+     * defaults (so you can re-enable a flag, set channelCount, etc).
+     */
+    constraints?: MediaTrackConstraints;
+    /**
+     * Set `false` to keep the browser's DSP (noiseSuppression /
+     * echoCancellation / autoGainControl) at its defaults. Unset (or `true`) →
+     * DSP disabled, which is correct for music / line-in / loopback capture.
+     */
+    disableProcessing?: boolean;
+    /** Test hook. */
+    ticker?: Ticker;
+}
+declare function createDeviceSource(opts?: DeviceSourceOptions): AudioSource;
+
+/**
+ * Audio-input device enumeration with label unlock.
+ *
+ * `navigator.mediaDevices.enumerateDevices()` returns blank `label`s until the
+ * page has held a getUserMedia audio stream at least once in the session. We
+ * grab a throwaway stream, stop it immediately, then enumerate — so a picker UI
+ * gets human-readable device names. (Same trick wwwtyro/syzygy uses.)
+ *
+ * This is the served-site, zero-install enumeration primitive: any HTTPS page
+ * can list the visitor's inputs — including OS loopback / virtual devices
+ * (BlackHole / Stereo Mix / VB-Cable) which is how system audio is captured
+ * without a native helper.
+ *
+ * Credit: technique ported from syzygy by Rye Terrell
+ * (https://github.com/wwwtyro/syzygy).
+ */
+
+interface AudioInputDevice {
+    /** Opaque, origin-scoped id. Pass to `createDeviceSource({ deviceId })`. */
+    deviceId: string;
+    /** Human label, or a stable fallback when the browser withholds it. */
+    label: string;
+    /** Groups a physical device's in/out endpoints. */
+    groupId: string;
+}
+/**
+ * List connected audio INPUT devices.
+ *
+ * Throws `AudioSourceUnavailableError`:
+ *   'unsupported'       — mediaDevices / enumerateDevices not present
+ *   'permission-denied' — user blocked the one-time label-unlock prompt
+ */
+declare function listAudioInputDevices(): Promise<AudioInputDevice[]>;
+/**
+ * Subscribe to hardware add/remove (USB interface plugged, headset connected…).
+ * Returns an unsubscribe fn; a no-op unsubscribe where unsupported.
+ */
+declare function onDeviceChange(cb: () => void): Unsubscribe;
+
+/**
+ * "Listen" to audio inputs and rank them by signal level — the autodetect
+ * primitive (port of wwwtyro/syzygy's "Autodetect" button / `measureDeviceRms`).
+ *
+ * Lets you (or the user) discover which of several inputs — mic, line-in,
+ * BlackHole, Stereo Mix, VB-Cable — is actually playing right now, instead of
+ * guessing from labels. Essential UX for the loopback/system-audio case where
+ * the right device has an opaque name.
+ *
+ * Each probe uses a DEDICATED, throwaway `AudioContext` (never the library
+ * singleton from `shared/audioContext.ts`) so it can be fully closed and never
+ * disturbs a live capture pipeline.
+ *
+ * Credit: RMS autodetect ported from syzygy's `measureDeviceRms` by Rye Terrell
+ * (https://github.com/wwwtyro/syzygy).
+ */
+
+interface AudioInputLevel {
+    deviceId: string;
+    label: string;
+    /** Mean RMS of byte-frequency magnitudes over the window (~0..255). 0 = silent or probe failed. */
+    rms: number;
+}
+interface ProbeOptions {
+    /** RMS samples per device. Default 10. */
+    samples?: number;
+    /** Delay between samples, ms. Default 200 (→ ~2s/device, matching syzygy). */
+    intervalMs?: number;
+    /** Abort the probe early; un-probed devices resolve to rms 0. */
+    signal?: AbortSignal;
+}
+/**
+ * Probe every input in parallel and return them sorted by signal level
+ * (loudest first). Per-device failures resolve to rms 0 — the batch never
+ * rejects. Omit `devices` to enumerate first via `listAudioInputDevices()`.
+ */
+declare function probeAudioInputLevels(devices?: AudioInputDevice[], opts?: ProbeOptions): Promise<AudioInputLevel[]>;
+/**
+ * One-call autodetect: enumerate → probe → return the loudest device with a
+ * non-zero signal, or `null` if every input is silent.
+ */
+declare function detectActiveAudioInput(opts?: ProbeOptions): Promise<AudioInputDevice | null>;
+
+/**
  * Native-bridge source — consumes system audio from the SJAudioBridge macOS
  * helper (https://github.com/jayvee6/sj-audio-bridge) over a token-gated
  * localhost WebSocket, injects it through an AudioWorklet into the EXISTING
@@ -296,11 +424,13 @@ declare function createAudioEngine(opts?: AudioEngineOptions): AudioEngine;
 /**
  * SJAudio — cross-browser web audio capture + analysis library for music viz.
  *
- * Four source adapters (mediaElement, microphone, displayMedia, file) plus a
- * unified `createAudioEngine` orchestrator with graceful fallback. Ships as
- * ESM + CJS + UMD (global: `window.SJAudio`).
+ * Source adapters (mediaElement, microphone, displayMedia, file, device,
+ * nativeBridge) plus a unified `createAudioEngine` orchestrator with graceful
+ * fallback. `listAudioInputDevices` / `detectActiveAudioInput` power a
+ * served-site, zero-install device picker. Ships as ESM + CJS + UMD (global:
+ * `window.SJAudio`).
  */
-declare const version = "0.2.0";
+declare const version = "0.3.0";
 
-export { AudioSourceUnavailableError, createAudioEngine, createDisplayMediaSource, createFileSource, createMediaElementSource, createMicrophoneSource, createNativeBridgeSource, detectCapabilities, isLikelyChromium, version };
-export type { AnalyzerOptions, AudioEngine, AudioEngineOptions, AudioFrame, AudioSource, AudioSourceKind, AudioSourceUnavailableReason, Capabilities, FrameListener, NativeBridgeSourceOptions, Unsubscribe };
+export { AudioSourceUnavailableError, createAudioEngine, createDeviceSource, createDisplayMediaSource, createFileSource, createMediaElementSource, createMicrophoneSource, createNativeBridgeSource, detectActiveAudioInput, detectCapabilities, isLikelyChromium, listAudioInputDevices, onDeviceChange, probeAudioInputLevels, version };
+export type { AnalyzerOptions, AudioEngine, AudioEngineOptions, AudioFrame, AudioInputDevice, AudioInputLevel, AudioSource, AudioSourceKind, AudioSourceUnavailableReason, Capabilities, DeviceSourceOptions, FrameListener, NativeBridgeSourceOptions, ProbeOptions, Unsubscribe };
